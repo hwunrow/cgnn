@@ -1,25 +1,119 @@
-import pathlib
+import numpy as np
 import pandas as pd
+import sys
+
 import torch
-from utils import BOROUGH_FIPS_MAP, getDateRange
 from torch_geometric.data import Data
+import glob
+import os
+from tqdm import tqdm
+
+sys.path.append("../utils/")
+from utils import get_date_range, get_fips_list
+from codebook import BOROUGH_FIPS_MAP, BOROUGH_FULL_FIPS_DICT
+
 
 START_DATE = "02/29/2020"
 END_DATE = "05/30/2020"
-TRAIN_SPLIT_IDX = 120
+TRAIN_SPLIT_IDX = 60
 TIME_WINDOW_SIZE = 7
 DS_LABEL = "test_gen"
 
 
+RAW_DEATH_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deaths-by-day.csv"
+RAW_CASE_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/cases-by-day.csv"
+RAW_SAFEGRAPH_DIR = "../data/raw/mobility/"
+RAW_MOBILITY_REPORT_FILE = "../data/raw/2020_US_Region_Mobility_Report.csv"
+
+
+def create_torch_geometric_data(device="cpu"):
+    dates = get_date_range(START_DATE, END_DATE)
+    fips_list = get_fips_list()
+
+    # process data
+    death_subset_df, case_subset_df = process_case_death_data()
+    node_dict = create_node_key()
+    nyc_mobility_report_df = process_mobility_report()
+    coo_df = create_edge_index(node_dict, dates, fips_list)
+    edge_weights = process_safegraph_data(dates, node_dict, coo_df)
+    train_mask, test_mask = create_train_test_mask(node_dict, dates, fips_list)
+
+    # make everything a tensor
+    coo_t = torch.tensor(coo_df.values, dtype=torch.int64)
+    coo_t = coo_t.reshape((2, len(coo_df.values)))
+
+    edge_weight_tensor = torch.tensor(edge_weights, dtype=torch.float32)
+
+    x_t = case_subset_df.merge(
+        death_subset_df, on=["date_of_interest", "FIPS", "node_key"]
+    )
+    x_t = x_t.merge(
+        nyc_mobility_report_df,
+        left_on=["date_of_interest", "FIPS"],
+        right_on=["date", "FIPS"],
+    )
+    x_t_cols = [
+        "CASE_COUNT",
+        "CASE_COUNT_7DAY_AVG",
+        "CASE_COUNT_PREV_0",
+        "CASE_COUNT_PREV_1",
+        "CASE_COUNT_PREV_2",
+        "CASE_COUNT_PREV_3",
+        "CASE_COUNT_PREV_4",
+        "CASE_COUNT_PREV_5",
+        "DEATH_COUNT",
+        "DEATH_COUNT_7DAY_AVG",
+        "DEATH_COUNT_PREV_0",
+        "DEATH_COUNT_PREV_1",
+        "DEATH_COUNT_PREV_2",
+        "DEATH_COUNT_PREV_3",
+        "DEATH_COUNT_PREV_4",
+        "DEATH_COUNT_PREV_5",
+        "retail_and_recreation_percent_change_from_baseline",
+        "grocery_and_pharmacy_percent_change_from_baseline",
+        "parks_percent_change_from_baseline",
+        "transit_stations_percent_change_from_baseline",
+        "workplaces_percent_change_from_baseline",
+        "residential_percent_change_from_baseline",
+    ]
+    x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
+    y_t = torch.tensor(
+        case_subset_df["CASE_DELTA"].values
+        + case_subset_df["CASE_COUNT_7DAY_AVG"].values,
+        dtype=torch.float32,
+    )
+    data = Data(
+        x=x_t.to(device),
+        y=y_t.to(device),
+        edge_index=coo_t.to(device),
+        edge_weight=edge_weight_tensor.to(device),
+    )
+
+    data.train_mask = torch.tensor(np.array(train_mask), dtype=torch.bool).to(device)
+    data.test_mask = torch.tensor(np.array(test_mask), dtype=torch.bool).to(device)
+
+    return data
+
+
 def create_node_key():
-    dates = getDateRange(START_DATE, END_DATE)
-    fips_list = list(BOROUGH_FIPS_MAP.values())
+    """
+    Creates a dictionary mapping node keys to vertex indices.
+
+    Each key is formatted as {FIPS}-{YYYY-MM-DD}. For example, "36061-2020-03-01"
+    is the key for node associated with Manhattan on March 1, 2020.
+    The index values are orded by date and then FIPS.
+
+    Returns:
+        dict: A dictionary mapping node keys to vertex indices.
+    """
+    dates = get_date_range(START_DATE, END_DATE)
+    fips_list = get_fips_list()
 
     node_dict = dict()
 
     curr_idx = 0
-    for f in fips_list:
-        for d in dates:
+    for d in dates:
+        for f in fips_list:
             key_str = f"{f}-{d.strftime('%Y-%m-%d')}"
             node_dict[key_str] = curr_idx
             curr_idx += 1
@@ -27,14 +121,111 @@ def create_node_key():
     return node_dict
 
 
+def create_train_test_mask(node_dict, dates, fips_list):
+    """
+    Creates train and test masks.
+    Train mask includes data up to the TRAIN_SPLIT_IDX'th date.
+
+    Args:
+        node_dict (dict): A dictionary mapping node keys to vertex indices.
+        dates (list): A list of datetime objects representing dates.
+        fips_list (list): A list of FIPS codes for each borough.
+
+    Returns:
+        tuple: A tuple containing two lists, of the train mask and the test mask.
+            Each list has the same length as the number of nodes,
+            with 1s indicating inclusion, and 0s indicating exclusion.
+    """
+    train_mask = [0 for _ in range(len(node_dict))]
+    test_mask = [0 for _ in range(len(node_dict))]
+
+    for i in range(len(dates)):
+        for fips in fips_list:
+            date_str = dates[i].strftime("%Y-%m-%d")
+            key_str = "{}-{}".format(fips, date_str)
+
+            idx = node_dict[key_str]
+            if i < TRAIN_SPLIT_IDX:
+                train_mask[idx] = 1
+            else:
+                test_mask[idx] = 1
+
+    return train_mask, test_mask
+
+
+def create_edge_index(node_dict, dates, fips_list):
+    """
+    Creates edge index DataFrame representing spatial and temporal edges.
+    The function first creates spatial edges, connecting all boroughs to each other
+    for each date.
+    Then, it creates temporal edges, linking each borough to itself for previous days
+    in a time window. The time window size is defined by the variable TIME_WINDOW_SIZE.
+
+    Args:
+        node_dict (dict): A dictionary mapping node keys to to vertex indices.
+        dates (list): A list of datetime objects representing dates.
+        fips_list (list): A list of FIPS codes for each borough.
+
+    Returns:
+        pandas.DataFrame: Each row of the DataFrame corresponds to an edge,
+            with two columns representing the source and target node indices.
+    """
+    coo_list = []
+
+    # create spatial edges (all boroughs are connected to each other)
+    for d in dates:
+        for u in fips_list:
+            for v in fips_list:
+                u_key = f"{u}-{d.strftime('%Y-%m-%d')}"
+                v_key = f"{v}-{d.strftime('%Y-%m-%d')}"
+                u_idx = node_dict[u_key]
+                v_idx = node_dict[v_key]
+                coo_list.append([u_idx, v_idx])
+    print(len(coo_list), "spatial edges")
+
+    # create temporal edges
+    temp_count = 0
+    for base_day_idx in range(0, len(dates) - TIME_WINDOW_SIZE):
+        base_day = dates[base_day_idx]
+        base_str = base_day.strftime("%Y-%m-%d")
+        for future_day in dates[base_day_idx + 1 : base_day_idx + TIME_WINDOW_SIZE + 1]:
+            future_str = future_day.strftime("%Y-%m-%d")
+
+            # iterate over each county fips
+            for f in fips_list:
+
+                # Need a link from base_day to future_day
+                u_key = f"{f}-{base_str}"
+                v_key = f"{f}-{future_str}"
+
+                u_idx = node_dict[u_key]
+                v_idx = node_dict[v_key]
+                # Only add past->future link.
+                coo_list.append([u_idx, v_idx])
+                temp_count += 1
+
+    print(temp_count, "temporal edges")
+    coo_df = pd.DataFrame(coo_list)
+
+    return coo_df
+
+
 def process_mobility_report():
+    """
+    Processes Google Community Mobility Reports data for New York City.
+
+    Reads the raw mobility report data from RAW_MOBILITY_REPORT_FILE, converts the 'date'
+    column to datetime format, and extracts data for New York City counties within the
+    specified date range (START_DATE to END_DATE).
+
+    Returns:
+        pandas.DataFrame: Columns include FIPS code, date, and mobility indicators.
+    """
     DTYPE = {
         "census_fips_code": "Int64",
         "date": "str",
     }
-    mobility_report_df = pd.read_csv(
-        "../data/raw/2020_US_Region_Mobility_Report.csv", dtype=DTYPE
-    )
+    mobility_report_df = pd.read_csv(RAW_MOBILITY_REPORT_FILE, dtype=DTYPE)
     mobility_report_df["date"] = pd.to_datetime(mobility_report_df["date"])
 
     counties = [
@@ -65,14 +256,92 @@ def process_mobility_report():
 
     nyc_mobility_report_df.rename(columns={"census_fips_code": "FIPS"}, inplace=True)
 
+    return nyc_mobility_report_df
+
+
+def process_safegraph_data(dates, node_dict, coo_df):
+    """
+    Processes SafeGraph mobility data to extract edge weights for temporal edges.
+
+    Args:
+        dates (list): A list of datetime objects representing dates.
+        node_dict (dict): A dictionary mapping node keys to vertex indices.
+        coo_df (pandas.DataFrame): A DataFrame containing edge indices.
+
+    Returns:
+        list: A list containing edge weights for temporal edges.
+
+    Note:
+        The function reads SafeGraph mobility data from CSV files in RAW_SAFEGRAPH_DIR.
+        It extracts edge weights based on visitor home aggregation for temporal edges,
+        with weights representing the number of visitors from the origin borough to the
+        destination borough.
+        Since the mobility data is only provided on a weekly basis, the function assigns
+        edge weights to the next Monday for each date.
+    """
+    mobility_files = glob.glob(f"{RAW_SAFEGRAPH_DIR}/*.csv")
+    mobility_dates = [os.path.basename(f).split("_")[0] for f in mobility_files]
+    mobility_dates = pd.to_datetime(mobility_dates)
+    mobility_dates = mobility_dates.sort_values()
+
+    day_mobility_dict = dict()
+
+    for d in dates:
+        next_sunday = d + pd.offsets.Week(n=0, weekday=0)
+        day_key = d.strftime("%Y-%m-%d")
+        day_mobility_dict[day_key] = next_sunday.strftime("%Y-%m-%d") + "_mobility.csv"
+
+    node_keys = list(node_dict.keys())
+
+    edge_weights = []
+
+    for row in tqdm(coo_df.iterrows()):
+        orig = row[1][0]
+        dest = row[1][1]
+
+        orig_key = node_keys[orig]
+        dest_key = node_keys[dest]
+
+        orig_fips, orig_date = orig_key.split("-", maxsplit=1)
+        dest_fips, dest_date = dest_key.split("-", maxsplit=1)
+
+        if orig_date != dest_date:
+            # temportal edge with no edge weight
+            edge_weights.append(1)
+        else:
+            df = pd.read_csv(RAW_SAFEGRAPH_DIR + day_mobility_dict[orig_date])
+            ew = df.loc[
+                (df.origin == BOROUGH_FULL_FIPS_DICT[orig_fips])
+                & (df.destination == BOROUGH_FULL_FIPS_DICT[dest_fips]),
+                "visitor_home_aggregation",
+            ].values[0]
+            edge_weights.append(ew)
+
+    return edge_weights
+
 
 def process_case_death_data():
-    death_df = pd.read_csv(
-        "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deaths-by-day.csv"
-    )
-    case_df = pd.read_csv(
-        "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/cases-by-day.csv"
-    )
+    """
+    Processes case and death data for New York City boroughs.
+
+    Reads raw case and death data from RAW_CASE_URL and RAW_DEATH_URL, converts the
+    'date_of_interest' column to datetime format, and extracts relevant subsets of data
+    within the specified date range (START_DATE to END_DATE).
+
+    Returns:
+        tuple: A tuple containing two DataFrames:
+            - death_subset_df: A DataFrame of processed death data, including FIPS code,
+              date, death counts, 7-day average death counts, and delta death counts.
+            - case_subset_df: A DataFrame of processed case data, including FIPS code,
+              date, case counts, 7-day average case counts, and delta case counts.
+
+    Note:
+        The function computes delta values for case and death counts as the change in the
+        next day's 7-day average.
+        It also computes previous case counts for each day within the time window.
+    """
+    death_df = pd.read_csv(RAW_DEATH_URL)
+    case_df = pd.read_csv(RAW_CASE_URL)
 
     death_df["date_of_interest"] = pd.to_datetime(death_df["date_of_interest"])
     case_df["date_of_interest"] = pd.to_datetime(case_df["date_of_interest"])
@@ -106,9 +375,9 @@ def process_case_death_data():
     death_subset_df["FIPS"] = death_subset_df["borough"].map(BOROUGH_FIPS_MAP)
 
     death_subset_df["node_key"] = (
-        death_subset_df["date_of_interest"].astype("str")
+        death_subset_df["FIPS"].astype(str)
         + "-"
-        + death_subset_df["FIPS"].astype(str)
+        + death_subset_df["date_of_interest"].astype("str")
     )
     long_cols = [
         "date_of_interest",
@@ -121,9 +390,12 @@ def process_case_death_data():
 
     # compute deltas
     death_subset_df = death_subset_df.sort_values(by=["date_of_interest", "FIPS"])
+
     death_subset_df["DEATH_DELTA"] = (
-        death_subset_df.groupby(["FIPS"])["DEATH_COUNT"].diff().fillna(0)
+        death_subset_df.groupby(["FIPS"])["DEATH_COUNT_7DAY_AVG"].diff(-1).fillna(0)
     )
+
+    death_subset_df["DEATH_DELTA"] = death_subset_df["DEATH_DELTA"] * -1
 
     subset_cols = [
         "date_of_interest",
@@ -153,9 +425,9 @@ def process_case_death_data():
 
     case_subset_df["FIPS"] = case_subset_df["borough"].map(BOROUGH_FIPS_MAP)
     case_subset_df["node_key"] = (
-        case_subset_df["date_of_interest"].astype("str")
+        case_subset_df["FIPS"].astype(str)
         + "-"
-        + case_subset_df["FIPS"].astype(str)
+        + case_subset_df["date_of_interest"].astype("str")
     )
     long_cols = [
         "date_of_interest",
@@ -171,11 +443,13 @@ def process_case_death_data():
     case_subset_df = case_subset_df.sort_values(by=["date_of_interest", "FIPS"])
 
     case_subset_df["CASE_DELTA"] = (
-        case_subset_df.groupby(["FIPS"])["CASE_COUNT"].diff().fillna(0)
+        case_subset_df.groupby(["FIPS"])["CASE_COUNT_7DAY_AVG"].diff(-1).fillna(0)
     )
 
+    case_subset_df["CASE_DELTA"] = case_subset_df["CASE_DELTA"] * -1
+
     deltaT = pd.Timedelta(value=1, unit="D")
-    dates = getDateRange(START_DATE, END_DATE)
+    dates = get_date_range(START_DATE, END_DATE)
 
     for f in list(BOROUGH_FIPS_MAP.values()):
         for d in dates:
@@ -213,3 +487,8 @@ def process_case_death_data():
                 death_subset_df.loc[selection_current, f"DEATH_COUNT_PREV_{dd}"] = (
                     prev_deaths
                 )
+
+    death_subset_df.reset_index(inplace=True)
+    case_subset_df.reset_index(inplace=True)
+
+    return death_subset_df, case_subset_df
