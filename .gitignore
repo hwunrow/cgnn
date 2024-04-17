@@ -4,6 +4,8 @@ __pycache__/
 *$py.class
 .DS_Store
 data/raw/mobility/*.csv
+.vscode/*
+.virtual_documents/* 
 
 # C extensions
 *.so
