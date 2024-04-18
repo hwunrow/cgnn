@@ -1,12 +1,13 @@
 import numpy as np
 import pandas as pd
+
+import glob
+import os
+from tqdm import tqdm
 import sys
 
 import torch
 from torch_geometric.data import Data
-import glob
-import os
-from tqdm import tqdm
 
 sys.path.append("../utils/")
 from utils import get_date_range, get_fips_list
@@ -17,7 +18,7 @@ START_DATE = "02/29/2020"
 END_DATE = "05/30/2020"
 TRAIN_SPLIT_IDX = 60
 TIME_WINDOW_SIZE = 7
-DS_LABEL = "test_gen"
+VERSION = "gcn"
 
 
 RAW_DEATH_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deaths-by-day.csv"
@@ -37,6 +38,16 @@ def create_torch_geometric_data(device="cpu"):
     coo_df = create_edge_index(node_dict, dates, fips_list)
     edge_weights = process_safegraph_data(dates, node_dict, coo_df)
     train_mask, test_mask = create_train_test_mask(node_dict, dates, fips_list)
+    save_data(
+        death_subset_df,
+        case_subset_df,
+        nyc_mobility_report_df,
+        coo_df,
+        edge_weights,
+        train_mask,
+        test_mask,
+        VERSION,
+    )
 
     # make everything a tensor
     coo_t = torch.tensor(coo_df.values, dtype=torch.int64)
@@ -93,6 +104,30 @@ def create_torch_geometric_data(device="cpu"):
     data.test_mask = torch.tensor(np.array(test_mask), dtype=torch.bool).to(device)
 
     return data
+
+
+def save_data(
+    death_subset_df,
+    case_subset_df,
+    nyc_mobility_report_df,
+    coo_df,
+    edge_weights,
+    train_mask,
+    test_mask,
+    VERSION,
+):
+    path = f"../data/processed/{VERSION}/"
+    os.makedirs(path, exist_ok=True)
+
+    death_subset_df.to_csv(f"{path}/death_data.csv", index=False)
+    case_subset_df.to_csv(f"{path}/case_data.csv", index=False)
+    nyc_mobility_report_df.to_csv(f"{path}/mobility_report_data.csv", index=False)
+    coo_df.to_csv(f"{path}/coo_edge_index.csv", index=False)
+    np.save(f"{path}/edge_weights.npy", edge_weights)
+    np.save(f"{path}/train_mask.npy", train_mask)
+    np.save(f"{path}/test_mask.npy", test_mask)
+
+    print("Processed data saved to", path)
 
 
 def create_node_key():
