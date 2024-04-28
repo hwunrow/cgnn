@@ -3,6 +3,7 @@ import pandas as pd
 
 import glob
 import os
+import pickle
 from tqdm import tqdm
 import sys
 
@@ -13,7 +14,7 @@ sys.path.append("../utils/")
 from utils import get_date_range, get_fips_list
 from codebook import BOROUGH_FIPS_MAP, BOROUGH_FULL_FIPS_DICT
 
-
+# TODO don't hardcode these values, make them a YAML file that is saved
 START_DATE = "02/29/2020"
 END_DATE = "05/30/2020"
 TRAIN_SPLIT_IDX = 60
@@ -27,27 +28,39 @@ RAW_SAFEGRAPH_DIR = "../data/raw/mobility/"
 RAW_MOBILITY_REPORT_FILE = "../data/raw/2020_US_Region_Mobility_Report.csv"
 
 
-def create_torch_geometric_data(device="cpu"):
-    dates = get_date_range(START_DATE, END_DATE)
-    fips_list = get_fips_list()
+def create_torch_geometric_data(device="cpu", processed_path=None):
+    if processed_path:
+        death_subset_df = pd.read_csv(f"{processed_path}/death_data.csv")
+        case_subset_df = pd.read_csv(f"{processed_path}/case_data.csv")
+        nyc_mobility_report_df = pd.read_csv(
+            f"{processed_path}/mobility_report_data.csv"
+        )
+        coo_df = pd.read_csv(f"{processed_path}/coo_edge_index.csv")
+        edge_weights = np.load(f"{processed_path}/edge_weights.npy")
+        train_mask = np.load(f"{processed_path}/train_mask.npy")
+        test_mask = np.load(f"{processed_path}/test_mask.npy")
+    else:
+        dates = get_date_range(START_DATE, END_DATE)
+        fips_list = get_fips_list()
 
-    # process data
-    death_subset_df, case_subset_df = process_case_death_data()
-    node_dict = create_node_key()
-    nyc_mobility_report_df = process_mobility_report()
-    coo_df = create_edge_index(node_dict, dates, fips_list)
-    edge_weights = process_safegraph_data(dates, node_dict, coo_df)
-    train_mask, test_mask = create_train_test_mask(node_dict, dates, fips_list)
-    save_data(
-        death_subset_df,
-        case_subset_df,
-        nyc_mobility_report_df,
-        coo_df,
-        edge_weights,
-        train_mask,
-        test_mask,
-        VERSION,
-    )
+        # process data
+        death_subset_df, case_subset_df = process_case_death_data()
+        node_dict = create_node_key()
+        nyc_mobility_report_df = process_mobility_report()
+        coo_df = create_edge_index(node_dict, dates, fips_list)
+        edge_weights = process_safegraph_data(dates, node_dict, coo_df)
+        train_mask, test_mask = create_train_test_mask(node_dict, dates, fips_list)
+        save_data(
+            death_subset_df,
+            case_subset_df,
+            nyc_mobility_report_df,
+            coo_df,
+            edge_weights,
+            train_mask,
+            test_mask,
+            node_dict,
+            VERSION,
+        )
 
     # make everything a tensor
     coo_t = torch.tensor(coo_df.values, dtype=torch.int64)
@@ -63,6 +76,13 @@ def create_torch_geometric_data(device="cpu"):
         left_on=["date_of_interest", "FIPS"],
         right_on=["date", "FIPS"],
     )
+    # correct the 7 day average so that it's not rounding to integers
+    x_t["CASE_COUNT_7DAY_AVG"] = x_t[
+        [f"CASE_COUNT_PREV_{i}" for i in range(6)] + ["CASE_COUNT"]
+    ].mean(axis=1)
+    x_t["DEATH_COUNT_7DAY_AVG"] = x_t[
+        [f"DEATH_COUNT_PREV_{i}" for i in range(6)] + ["DEATH_COUNT"]
+    ].mean(axis=1)
     x_t_cols = [
         "CASE_COUNT",
         "CASE_COUNT_7DAY_AVG",
@@ -87,6 +107,7 @@ def create_torch_geometric_data(device="cpu"):
         "workplaces_percent_change_from_baseline",
         "residential_percent_change_from_baseline",
     ]
+    x_t[x_t_cols].to_csv(f"../data/processed/{VERSION}/x_t.csv", index=False)
     x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
     y_t = torch.tensor(
         case_subset_df["CASE_DELTA"].values
@@ -114,6 +135,7 @@ def save_data(
     edge_weights,
     train_mask,
     test_mask,
+    node_dict,
     VERSION,
 ):
     path = f"../data/processed/{VERSION}/"
@@ -126,6 +148,8 @@ def save_data(
     np.save(f"{path}/edge_weights.npy", edge_weights)
     np.save(f"{path}/train_mask.npy", train_mask)
     np.save(f"{path}/test_mask.npy", test_mask)
+    with open(f"{path}/node_dict.pkl", "wb") as f:
+        pickle.dump(node_dict, f)
 
     print("Processed data saved to", path)
 
