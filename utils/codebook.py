@@ -15,9 +15,17 @@ FIPS_BOROUGH_MAP = {
 }
 
 BOROUGH_FULL_FIPS_DICT = {
-    "36005": "Bronx",
-    "36047": "Brooklyn",
-    "36061": "Manhattan",
-    "36081": "Queens",
-    "36085": "Staten Island",
+    36005: "Bronx",
+    36047: "Brooklyn",
+    36061: "Manhattan",
+    36081: "Queens",
+    36085: "Staten Island",
+}
+
+NODE_IDX_FIPS_MAP = {
+    0: 36005,
+    1: 36047,
+    2: 36061,
+    3: 36081,
+    4: 36085,
 }
