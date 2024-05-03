@@ -10,9 +10,11 @@ import sys
 import torch
 from torch_geometric.data import Data
 
+from torch_geometric_temporal.signal import DynamicGraphTemporalSignal
+
 sys.path.append("../utils/")
 from utils import get_date_range, get_fips_list
-from codebook import BOROUGH_FIPS_MAP, BOROUGH_FULL_FIPS_DICT
+from codebook import BOROUGH_FIPS_MAP, BOROUGH_FULL_FIPS_DICT, NODE_IDX_FIPS_MAP
 
 # TODO don't hardcode these values, make them a YAML file that is saved
 START_DATE = "02/29/2020"
@@ -26,6 +28,127 @@ RAW_DEATH_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/ma
 RAW_CASE_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/cases-by-day.csv"
 RAW_SAFEGRAPH_DIR = "../data/raw/mobility/"
 RAW_MOBILITY_REPORT_FILE = "../data/raw/2020_US_Region_Mobility_Report.csv"
+
+
+def create_torch_geometric_temporal_data(device="cpu", processed_path=None):
+    """
+    Creates a torch geometric DynamicGraphTemporalSignal object representing temporal
+    signals (temporal node features) defined on a dynamic graph (changing edge weights).
+
+    Args:
+        device (str, optional): The device to store the data (default is "cpu").
+        processed_path (str, optional): Path to the processed data (default is None).
+
+    Returns:
+        DynamicGraphTemporalSignal: A torch geometric temporal data object.
+    """
+    dates = get_date_range(START_DATE, END_DATE)
+    node_dict = create_node_key()
+
+    edge_indices = create_edge_indices(dates)
+    edge_weights = create_edge_weights(dates, edge_indices[0])
+    features, targets = create_features_targets(dates, node_dict)
+
+    data = DynamicGraphTemporalSignal(edge_indices, edge_weights, features, targets)
+
+    return data
+
+
+def create_edge_indices(dates):
+    """
+    Creates edge indices for a dynamic graph given a list of dates.
+
+    Args:
+        dates (list of datetime): List of dates.
+
+    Returns:
+        list of numpy.ndarray: List of edge indices arrays for each snapshot.
+    """
+    num_nodes = 5
+    nodes = np.arange(num_nodes)
+    edges_upper = np.tile(nodes, (num_nodes, 1))
+    edges_lower = np.transpose(edges_upper)
+    edge_indices = np.concatenate(
+        (edges_upper.reshape(1, -1), edges_lower.reshape(1, -1)), axis=0
+    )
+    edge_indices %= num_nodes
+
+    edge_indices_list = [edge_indices for _ in range(len(dates))]
+
+    return edge_indices_list
+
+
+def create_edge_weights(dates, edge_snapshot):
+    """
+    Creates edge weights for a dynamic graph given a list of dates and an edge snapshot.
+
+    Args:
+        dates (list of datetime): List of dates.
+        edge_snapshot (numpy.ndarray): Edge indices array for K_5 complete graph.
+
+    Returns:
+        list of numpy.ndarray: List of edge weights arrays for each snapshot.
+    """
+    mobility_files = glob.glob(f"{RAW_SAFEGRAPH_DIR}/*.csv")
+    mobility_dates = [os.path.basename(f).split("_")[0] for f in mobility_files]
+    mobility_dates = pd.to_datetime(mobility_dates)
+    mobility_dates = mobility_dates.sort_values()
+
+    day_mobility_dict = dict()
+    for d in dates:
+        next_sunday = d + pd.offsets.Week(n=0, weekday=0)
+        day_key = d.strftime("%Y-%m-%d")
+        day_mobility_dict[day_key] = next_sunday.strftime("%Y-%m-%d") + "_mobility.csv"
+
+    edge_weights = []
+
+    for d in tqdm(dates):
+        df = pd.read_csv(
+            RAW_SAFEGRAPH_DIR + day_mobility_dict[dates[0].strftime("%Y-%m-%d")]
+        )
+
+        edge_weight_snapshot = np.zeros(shape=edge_snapshot.shape[1])
+        for i, column in enumerate(edge_snapshot.T):
+            orig_idx, dest_idx = column
+            edge_weight_snapshot[i] = df.loc[
+                (df.origin == BOROUGH_FULL_FIPS_DICT[NODE_IDX_FIPS_MAP[orig_idx]])
+                & (
+                    df.destination
+                    == BOROUGH_FULL_FIPS_DICT[NODE_IDX_FIPS_MAP[dest_idx]]
+                ),
+                "visitor_home_aggregation",
+            ].values[0]
+        edge_weights.append(edge_weight_snapshot)
+
+    return edge_weights
+
+
+def create_features_targets(dates, node_dict):
+    """
+    Creates node-level features and targets as list of numpy arrays for each date.
+
+    Args:
+        dates (list of datetime): List of dates.
+        node_dict (dict): Dictionary mapping node keys to indices.
+
+    Returns:
+        tuple: (features (list of numpy.ndarray), targets (list of numpy.ndarray)).
+    """
+    x_t = pd.read_csv("../data/processed/gcn/x_t.csv")
+    y_t = pd.read_csv("../data/processed/gcn/y_t.csv")
+    features = []
+    targets = []
+    for d in dates:
+        feature_snapshot = np.zeros((5, 22))
+        targets_snapshot = np.zeros(5)
+        for idx in range(5):
+            key = str(NODE_IDX_FIPS_MAP[idx]) + "-" + d.strftime("%Y-%m-%d")
+            feature_snapshot[idx, :] = np.array(x_t.iloc[node_dict[key]])
+            targets_snapshot[idx] = y_t.iloc[node_dict[key]]
+        features.append(feature_snapshot)
+        targets.append(targets_snapshot)
+
+    return features, targets
 
 
 def create_torch_geometric_data(device="cpu", processed_path=None):
@@ -76,13 +199,6 @@ def create_torch_geometric_data(device="cpu", processed_path=None):
         left_on=["date_of_interest", "FIPS"],
         right_on=["date", "FIPS"],
     )
-    # correct the 7 day average so that it's not rounding to integers
-    x_t["CASE_COUNT_7DAY_AVG"] = x_t[
-        [f"CASE_COUNT_PREV_{i}" for i in range(6)] + ["CASE_COUNT"]
-    ].mean(axis=1)
-    x_t["DEATH_COUNT_7DAY_AVG"] = x_t[
-        [f"DEATH_COUNT_PREV_{i}" for i in range(6)] + ["DEATH_COUNT"]
-    ].mean(axis=1)
     x_t_cols = [
         "CASE_COUNT",
         "CASE_COUNT_7DAY_AVG",
@@ -109,9 +225,10 @@ def create_torch_geometric_data(device="cpu", processed_path=None):
     ]
     x_t[x_t_cols].to_csv(f"../data/processed/{VERSION}/x_t.csv", index=False)
     x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
+    y_t = case_subset_df["CASE_DELTA"] + case_subset_df["CASE_COUNT_7DAY_AVG"]
+    y_t.to_csv(f"../data/processed/{VERSION}/y_t.csv", index=False)
     y_t = torch.tensor(
-        case_subset_df["CASE_DELTA"].values
-        + case_subset_df["CASE_COUNT_7DAY_AVG"].values,
+        y_t.values,
         dtype=torch.float32,
     )
     data = Data(
@@ -370,8 +487,8 @@ def process_safegraph_data(dates, node_dict, coo_df):
         else:
             df = pd.read_csv(RAW_SAFEGRAPH_DIR + day_mobility_dict[orig_date])
             ew = df.loc[
-                (df.origin == BOROUGH_FULL_FIPS_DICT[orig_fips])
-                & (df.destination == BOROUGH_FULL_FIPS_DICT[dest_fips]),
+                (df.origin == BOROUGH_FULL_FIPS_DICT[int(orig_fips)])
+                & (df.destination == BOROUGH_FULL_FIPS_DICT[int(dest_fips)]),
                 "visitor_home_aggregation",
             ].values[0]
             edge_weights.append(ew)
@@ -447,15 +564,6 @@ def process_case_death_data():
     ]
     death_subset_df = death_subset_df[long_cols]
 
-    # compute deltas
-    death_subset_df = death_subset_df.sort_values(by=["date_of_interest", "FIPS"])
-
-    death_subset_df["DEATH_DELTA"] = (
-        death_subset_df.groupby(["FIPS"])["DEATH_COUNT_7DAY_AVG"].diff(-1).fillna(0)
-    )
-
-    death_subset_df["DEATH_DELTA"] = death_subset_df["DEATH_DELTA"] * -1
-
     subset_cols = [
         "date_of_interest",
         "BX_CASE_COUNT",
@@ -498,15 +606,6 @@ def process_case_death_data():
 
     case_subset_df = case_subset_df[long_cols]
 
-    # compute deltas
-    case_subset_df = case_subset_df.sort_values(by=["date_of_interest", "FIPS"])
-
-    case_subset_df["CASE_DELTA"] = (
-        case_subset_df.groupby(["FIPS"])["CASE_COUNT_7DAY_AVG"].diff(-1).fillna(0)
-    )
-
-    case_subset_df["CASE_DELTA"] = case_subset_df["CASE_DELTA"] * -1
-
     deltaT = pd.Timedelta(value=1, unit="D")
     dates = get_date_range(START_DATE, END_DATE)
 
@@ -540,12 +639,33 @@ def process_case_death_data():
                 if prev < pd.to_datetime(START_DATE):
                     prev_deaths = 0
                 else:
-                    prev_deaths = case_subset_df.loc[
-                        selection_prev, "CASE_COUNT"
+                    prev_deaths = death_subset_df.loc[
+                        selection_prev, "DEATH_COUNT"
                     ].values[0]
                 death_subset_df.loc[selection_current, f"DEATH_COUNT_PREV_{dd}"] = (
                     prev_deaths
                 )
+
+    # correct the 7 day average so that it's not rounding to integers
+    case_subset_df["CASE_COUNT_7DAY_AVG"] = case_subset_df[
+        [f"CASE_COUNT_PREV_{i}" for i in range(6)] + ["CASE_COUNT"]
+    ].mean(axis=1)
+    death_subset_df["DEATH_COUNT_7DAY_AVG"] = death_subset_df[
+        [f"DEATH_COUNT_PREV_{i}" for i in range(6)] + ["DEATH_COUNT"]
+    ].mean(axis=1)
+
+    # compute deltas
+    case_subset_df = case_subset_df.sort_values(by=["date_of_interest", "FIPS"])
+    case_subset_df["CASE_DELTA"] = (
+        case_subset_df.groupby(["FIPS"])["CASE_COUNT_7DAY_AVG"].diff(-1).fillna(0)
+    )
+    case_subset_df["CASE_DELTA"] = case_subset_df["CASE_DELTA"] * -1
+
+    death_subset_df = death_subset_df.sort_values(by=["date_of_interest", "FIPS"])
+    death_subset_df["DEATH_DELTA"] = (
+        death_subset_df.groupby(["FIPS"])["DEATH_COUNT_7DAY_AVG"].diff(-1).fillna(0)
+    )
+    death_subset_df["DEATH_DELTA"] = death_subset_df["DEATH_DELTA"] * -1
 
     death_subset_df.reset_index(inplace=True)
     case_subset_df.reset_index(inplace=True)
