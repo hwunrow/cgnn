@@ -228,8 +228,6 @@ dependencies:
   - libjpeg-turbo=2.0.0=h1a28f6b_0
   - liblief=0.12.3=h313beb8_0
   - libllvm14=14.0.6=h7ec7a93_3
-  - libmamba=1.5.6=h15e39b3_0
-  - libmambapy=1.5.6=py311h1c5506f_0
   - libnghttp2=1.57.0=h62f6fdd_0
   - libopenblas=0.3.21=h269037a_0
   - libpng=1.6.39=h80987f9_0
