@@ -9,7 +9,7 @@ import numpy as np
 
 NODE_FEATURES = 22
 OUT_DIM = 1
-DROPOUT = 0.1
+DROPOUT = 0.5
 
 
 class RMSLELoss(torch.nn.Module):
