@@ -12,6 +12,20 @@ OUT_DIM = 1
 DROPOUT = 0.1
 
 
+class RMSLELoss(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.mse = torch.nn.MSELoss()
+
+    def forward(self, pred, actual):
+        rmsle = torch.sqrt(self.mse(torch.log(pred + 1), torch.log(actual + 1)))
+        if torch.isnan(rmsle):
+            import pdb
+
+            pdb.set_trace()
+        return rmsle
+
+
 class GCN(nn.Module):
     def __init__(self):
         super().__init__()
