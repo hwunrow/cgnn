@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from tqdm import tqdm
 from model import GCN, RMSLELoss
 import process_data
@@ -39,24 +40,28 @@ def run_model(out_dir, gnn_params, optim_params):
         for base_lr in optim_params["base_lr"]:
             for max_epoch in optim_params["max_epoch"]:
                 for weight_decay in optim_params["weight_decay"]:
-                    model = GCN(dropout=dropout).to(device)
-                    optimizer = torch.optim.Adam(
-                        model.parameters(), lr=base_lr, weight_decay=weight_decay
-                    )
-                    criterion = RMSLELoss()
-
                     train_loss = []
                     test_loss = []
-                    for epoch in tqdm(range(max_epoch)):
-                        # train
-                        model.train()
-                        optimizer.zero_grad()
-                        out, _ = model(graph.x.to(device), graph.edge_index.to(device))
-                        loss = criterion(
-                            out[graph.train_mask].squeeze(), graph.y[graph.train_mask]
+                    for _ in range(3):  # repeat 3 times
+                        model = GCN(dropout=dropout).to(device)
+                        optimizer = torch.optim.Adam(
+                            model.parameters(), lr=base_lr, weight_decay=weight_decay
                         )
-                        loss.backward()
-                        optimizer.step()
+                        criterion = RMSLELoss()
+
+                        for epoch in tqdm(range(max_epoch)):
+                            # train
+                            model.train()
+                            optimizer.zero_grad()
+                            out, _ = model(
+                                graph.x.to(device), graph.edge_index.to(device)
+                            )
+                            loss = criterion(
+                                out[graph.train_mask].squeeze(),
+                                graph.y[graph.train_mask],
+                            )
+                            loss.backward()
+                            optimizer.step()
                         train_loss.append(loss.cpu().detach().numpy())
 
                         # test
@@ -79,8 +84,8 @@ def run_model(out_dir, gnn_params, optim_params):
                                 base_lr,
                                 max_epoch,
                                 weight_decay,
-                                train_loss[-1],
-                                test_loss[-1],
+                                np.mean(train_loss),
+                                np.mean(test_loss),
                             ]
                         )
 
