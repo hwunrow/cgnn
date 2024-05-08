@@ -2,6 +2,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch_geometric.nn import GCNConv
+from torch_geometric_temporal.nn.recurrent.attentiontemporalgcn import A3TGCN
+
 import pandas as pd
 import process_data
 import numpy as np
@@ -23,6 +25,26 @@ class RMSLELoss(torch.nn.Module):
 
             pdb.set_trace()
         return rmsle
+
+
+class AttentionGCN(torch.nn.Module):
+    def __init__(self, node_features, periods, dropout, out_channels=32):
+        super(AttentionGCN, self).__init__()
+        self.attention = A3TGCN(node_features, out_channels, periods=periods)
+        self.MLP_pred = nn.Linear(out_channels, 1)
+        self.periods = periods
+        self.dropout = dropout
+
+    def forward(self, x, edge_index, edge_weight):
+        h = self.attention(x, edge_index, edge_weight)
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        h = h.relu()
+
+        delta = self.MLP_pred(h)
+        h = delta + x[:, 1, -1].unsqueeze(1)
+        out = h.relu()
+
+        return out, delta
 
 
 class GCN(nn.Module):
