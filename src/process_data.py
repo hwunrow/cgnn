@@ -21,7 +21,6 @@ START_DATE = "02/29/2020"
 END_DATE = "05/30/2020"
 TRAIN_SPLIT_IDX = 60
 TIME_WINDOW_SIZE = 7
-VERSION = "gcn"
 
 
 RAW_DEATH_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deaths-by-day.csv"
@@ -151,39 +150,28 @@ def create_features_targets(dates, node_dict):
     return features, targets
 
 
-def create_torch_geometric_data(device="cpu", processed_path=None):
-    if processed_path:
-        death_subset_df = pd.read_csv(f"{processed_path}/death_data.csv")
-        case_subset_df = pd.read_csv(f"{processed_path}/case_data.csv")
-        nyc_mobility_report_df = pd.read_csv(
-            f"{processed_path}/mobility_report_data.csv"
-        )
-        coo_df = pd.read_csv(f"{processed_path}/coo_edge_index.csv")
-        edge_weights = np.load(f"{processed_path}/edge_weights.npy")
-        train_mask = np.load(f"{processed_path}/train_mask.npy")
-        test_mask = np.load(f"{processed_path}/test_mask.npy")
-    else:
-        dates = get_date_range(START_DATE, END_DATE)
-        fips_list = get_fips_list()
+def create_torch_geometric_data(version, device="cpu", predict_delta=False):
+    dates = get_date_range(START_DATE, END_DATE)
+    fips_list = get_fips_list()
 
-        # process data
-        death_subset_df, case_subset_df = process_case_death_data()
-        node_dict = create_node_key()
-        nyc_mobility_report_df = process_mobility_report()
-        coo_df = create_edge_index(node_dict, dates, fips_list)
-        edge_weights = process_safegraph_data(dates, node_dict, coo_df)
-        train_mask, test_mask = create_train_test_mask(node_dict, dates, fips_list)
-        save_data(
-            death_subset_df,
-            case_subset_df,
-            nyc_mobility_report_df,
-            coo_df,
-            edge_weights,
-            train_mask,
-            test_mask,
-            node_dict,
-            VERSION,
-        )
+    # process data
+    death_subset_df, case_subset_df = process_case_death_data()
+    node_dict = create_node_key()
+    nyc_mobility_report_df = process_mobility_report()
+    coo_df = create_edge_index(node_dict, dates, fips_list)
+    edge_weights = process_safegraph_data(dates, node_dict, coo_df)
+    train_mask, test_mask = create_train_test_mask(node_dict, dates, fips_list)
+    save_data(
+        death_subset_df,
+        case_subset_df,
+        nyc_mobility_report_df,
+        coo_df,
+        edge_weights,
+        train_mask,
+        test_mask,
+        node_dict,
+        version,
+    )
 
     # make everything a tensor
     coo_t = torch.tensor(coo_df.values, dtype=torch.int64)
@@ -223,10 +211,13 @@ def create_torch_geometric_data(device="cpu", processed_path=None):
         "workplaces_percent_change_from_baseline",
         "residential_percent_change_from_baseline",
     ]
-    x_t[x_t_cols].to_csv(f"../data/processed/{VERSION}/x_t.csv", index=False)
+    x_t[x_t_cols].to_csv(f"../data/processed/{version}/x_t.csv", index=False)
     x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
-    y_t = case_subset_df["CASE_DELTA"] + case_subset_df["CASE_COUNT_7DAY_AVG"]
-    y_t.to_csv(f"../data/processed/{VERSION}/y_t.csv", index=False)
+    if predict_delta:
+        y_t = case_subset_df["CASE_DELTA"]
+    else:
+        y_t = case_subset_df["CASE_DELTA"] + case_subset_df["CASE_COUNT_7DAY_AVG"]
+    y_t.to_csv(f"../data/processed/{version}/y_t.csv", index=False)
     y_t = torch.tensor(
         y_t.values,
         dtype=torch.float32,
@@ -253,9 +244,9 @@ def save_data(
     train_mask,
     test_mask,
     node_dict,
-    VERSION,
+    version,
 ):
-    path = f"../data/processed/{VERSION}/"
+    path = f"../data/processed/{version}/"
     os.makedirs(path, exist_ok=True)
 
     death_subset_df.to_csv(f"{path}/death_data.csv", index=False)
