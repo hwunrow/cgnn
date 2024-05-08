@@ -1,0 +1,9 @@
+out_dir: experiments/cgnn
+gnn:
+  act: relu
+  dropout: [0.0001, 0.001, 0.01, 0.1, 0.5]
+optim:
+  optimizer: adam
+  base_lr:  [0.00001, 0.0001, 0.001, 0.01]
+  max_epoch: [1000, 10000, 100000]
+  weight_decay: [0.0005, 0.001, 0.005, 0.01, 0.05]
