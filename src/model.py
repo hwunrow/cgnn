@@ -9,7 +9,6 @@ import numpy as np
 
 NODE_FEATURES = 22
 OUT_DIM = 1
-DROPOUT = 0.5
 
 
 class RMSLELoss(torch.nn.Module):
@@ -27,26 +26,27 @@ class RMSLELoss(torch.nn.Module):
 
 
 class GCN(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout=0.5):
         super().__init__()
         self.MLP_embed = nn.Linear(NODE_FEATURES, 32)
         self.conv1 = GCNConv(32, 32)
         self.conv2 = GCNConv(64, 32)
         self.MLP_pred = nn.Linear(64, OUT_DIM)
+        self.dropout = dropout
 
     def forward(self, x, edge_index):
         h = self.MLP_embed(x)
-        h = F.dropout(h, p=DROPOUT, training=self.training)
+        h = F.dropout(h, p=self.dropout, training=self.training)
         h0 = h
 
         h = self.conv1(h, edge_index)
-        h = F.dropout(h, p=DROPOUT, training=self.training)
+        h = F.dropout(h, p=self.dropout, training=self.training)
         h = h.relu()
         h = torch.cat((h, h0), dim=1)  # skip connection
 
         h = self.conv2(h, edge_index)
         h = h.relu()
-        h = F.dropout(h, p=DROPOUT, training=self.training)
+        h = F.dropout(h, p=self.dropout, training=self.training)
         h = torch.cat((h, h0), dim=1)  # skip connection
 
         delta = self.MLP_pred(h)
