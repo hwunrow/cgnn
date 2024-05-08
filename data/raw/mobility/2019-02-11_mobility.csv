@@ -1,0 +1,26 @@
+destination,origin,visitor_home_aggregation,end
+Bronx,Bronx,32177,2019-02-11
+Bronx,Brooklyn,5287,2019-02-11
+Bronx,Manhattan,3606,2019-02-11
+Bronx,Queens,3103,2019-02-11
+Bronx,Staten Island,396,2019-02-11
+Brooklyn,Bronx,1397,2019-02-11
+Brooklyn,Brooklyn,34501,2019-02-11
+Brooklyn,Manhattan,1373,2019-02-11
+Brooklyn,Queens,4773,2019-02-11
+Brooklyn,Staten Island,1502,2019-02-11
+Manhattan,Bronx,99421,2019-02-11
+Manhattan,Brooklyn,124629,2019-02-11
+Manhattan,Manhattan,275482,2019-02-11
+Manhattan,Queens,115276,2019-02-11
+Manhattan,Staten Island,20822,2019-02-11
+Queens,Bronx,598,2019-02-11
+Queens,Brooklyn,2262,2019-02-11
+Queens,Manhattan,463,2019-02-11
+Queens,Queens,18958,2019-02-11
+Queens,Staten Island,107,2019-02-11
+Staten Island,Bronx,171,2019-02-11
+Staten Island,Brooklyn,855,2019-02-11
+Staten Island,Manhattan,173,2019-02-11
+Staten Island,Queens,319,2019-02-11
+Staten Island,Staten Island,18313,2019-02-11

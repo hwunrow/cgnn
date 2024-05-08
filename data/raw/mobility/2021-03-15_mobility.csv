@@ -1,0 +1,26 @@
+destination,origin,visitor_home_aggregation,end
+Bronx,Bronx,17886,2021-03-15
+Bronx,Brooklyn,1536,2021-03-15
+Bronx,Manhattan,2010,2021-03-15
+Bronx,Queens,2098,2021-03-15
+Bronx,Staten Island,320,2021-03-15
+Brooklyn,Bronx,708,2021-03-15
+Brooklyn,Brooklyn,25270,2021-03-15
+Brooklyn,Manhattan,683,2021-03-15
+Brooklyn,Queens,2965,2021-03-15
+Brooklyn,Staten Island,1285,2021-03-15
+Manhattan,Bronx,28674,2021-03-15
+Manhattan,Brooklyn,36015,2021-03-15
+Manhattan,Manhattan,99427,2021-03-15
+Manhattan,Queens,41386,2021-03-15
+Manhattan,Staten Island,8143,2021-03-15
+Queens,Bronx,287,2021-03-15
+Queens,Brooklyn,1331,2021-03-15
+Queens,Manhattan,254,2021-03-15
+Queens,Queens,15823,2021-03-15
+Queens,Staten Island,80,2021-03-15
+Staten Island,Bronx,65,2021-03-15
+Staten Island,Brooklyn,714,2021-03-15
+Staten Island,Manhattan,90,2021-03-15
+Staten Island,Queens,179,2021-03-15
+Staten Island,Staten Island,19531,2021-03-15
