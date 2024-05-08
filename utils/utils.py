@@ -54,3 +54,9 @@ def get_node_pos(version, idx):
     pos_x += delta_days
 
     return (pos_x, pos_y)
+
+
+def get_node_idx(node_dict, fips, date):
+    date = pd.to_datetime(date).strftime("%Y-%m-%d")
+    key = f"{fips}-{date}"
+    return node_dict[key]
