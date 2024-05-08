@@ -29,7 +29,6 @@ class RMSLELoss(torch.nn.Module):
 class GCN(nn.Module):
     def __init__(self):
         super().__init__()
-
         self.MLP_embed = nn.Linear(NODE_FEATURES, 32)
         self.conv1 = GCNConv(32, 32)
         self.conv2 = GCNConv(64, 32)
@@ -50,11 +49,11 @@ class GCN(nn.Module):
         h = F.dropout(h, p=DROPOUT, training=self.training)
         h = torch.cat((h, h0), dim=1)  # skip connection
 
-        h = self.MLP_pred(h)
-        h = h + x[:, 1].unsqueeze(1)
+        delta = self.MLP_pred(h)
+        h = delta + x[:, 1].unsqueeze(1)
         out = h.relu()
 
-        return out
+        return out, delta
 
 
 class prevCase(nn.Module):
@@ -92,7 +91,14 @@ class prevDelta(nn.Module):
         pred_df["CASE_DELTA"] = (
             pred_df.groupby(["fips"])["CASE_COUNT_7DAY_AVG"].diff(-1).fillna(0)
         )
+        pred_df["CASE_DELTA"] = pred_df["CASE_DELTA"] * -1
+        pred_df["CASE_DELTA"] = (
+            pred_df.groupby(["fips"])["CASE_DELTA"].shift(1).fillna(0)
+        )
         pred_df["pred"] = pred_df["CASE_DELTA"] + pred_df["CASE_COUNT_7DAY_AVG"]
         pred_df.loc[pred_df["pred"] < 0, "pred"] = 0.0
 
-        return torch.tensor(pred_df["pred"].values, dtype=torch.float32)
+        out = torch.tensor(pred_df["pred"].values, dtype=torch.float32)
+        delta = torch.tensor(pred_df["CASE_DELTA"].values, dtype=torch.float32)
+
+        return out, delta
