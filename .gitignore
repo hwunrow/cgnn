@@ -5,6 +5,7 @@ __pycache__/
 .DS_Store
 .vscode/*
 .virtual_documents/* 
+src/.virtual_documents/*
 
 # C extensions
 *.so
