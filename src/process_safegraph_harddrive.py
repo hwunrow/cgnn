@@ -69,7 +69,7 @@ def process_batch(i):
         nrows = df.shape[0]
         print(f"{na_rows} ({na_rows / nrows * 100 :.2f}%) rows out of {nrows} have NAs")
         df = df.dropna()
-        with open(f'{output_dir}/nan_log.csv', 'a', newline='') as csvfile:
+        with open(f'{output_dir}/logs/nan_log.csv', 'a', newline='') as csvfile:
             fieldnames = ['file', 'na_rows', 'nrows']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             if i == 0 and write_head:
