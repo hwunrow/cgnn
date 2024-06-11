@@ -10,7 +10,7 @@ import sys
 import torch
 from torch_geometric.data import Data
 
-from torch_geometric_temporal.signal import DynamicGraphTemporalSignal
+# from torch_geometric_temporal.signal import DynamicGraphTemporalSignal
 
 sys.path.append("../utils/")
 from utils import get_date_range, get_fips_list
@@ -25,32 +25,35 @@ TIME_WINDOW_SIZE = 7
 
 RAW_DEATH_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deaths-by-day.csv"
 RAW_CASE_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/cases-by-day.csv"
+RAW_DEATH_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deathrate-by-modzcta.csv"
+RAW_CASE_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/caserate-by-modzcta.csv"
+RAW_TOTALS_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/9fd8f9ca85a4f0cd7671c4872063cb525eacc42f/totals/data-by-modzcta.csv"
 RAW_SAFEGRAPH_DIR = "../data/raw/mobility/"
 RAW_MOBILITY_REPORT_FILE = "../data/raw/2020_US_Region_Mobility_Report.csv"
 
 
-def create_torch_geometric_temporal_data(device="cpu", processed_path=None):
-    """
-    Creates a torch geometric DynamicGraphTemporalSignal object representing temporal
-    signals (temporal node features) defined on a dynamic graph (changing edge weights).
+# def create_torch_geometric_temporal_data(device="cpu", processed_path=None):
+#     """
+#     Creates a torch geometric DynamicGraphTemporalSignal object representing temporal
+#     signals (temporal node features) defined on a dynamic graph (changing edge weights).
 
-    Args:
-        device (str, optional): The device to store the data (default is "cpu").
-        processed_path (str, optional): Path to the processed data (default is None).
+#     Args:
+#         device (str, optional): The device to store the data (default is "cpu").
+#         processed_path (str, optional): Path to the processed data (default is None).
 
-    Returns:
-        DynamicGraphTemporalSignal: A torch geometric temporal data object.
-    """
-    dates = get_date_range(START_DATE, END_DATE)
-    node_dict = create_node_key()
+#     Returns:
+#         DynamicGraphTemporalSignal: A torch geometric temporal data object.
+#     """
+#     dates = get_date_range(START_DATE, END_DATE)
+#     node_dict = create_node_key()
 
-    edge_indices = create_edge_indices(dates)
-    edge_weights = create_edge_weights(dates, edge_indices[0])
-    features, targets = create_features_targets(dates, node_dict)
+#     edge_indices = create_edge_indices(dates)
+#     edge_weights = create_edge_weights(dates, edge_indices[0])
+#     features, targets = create_features_targets(dates, node_dict)
 
-    data = DynamicGraphTemporalSignal(edge_indices, edge_weights, features, targets)
+#     data = DynamicGraphTemporalSignal(edge_indices, edge_weights, features, targets)
 
-    return data
+#     return data
 
 
 def create_edge_indices(dates):
@@ -485,6 +488,88 @@ def process_safegraph_data(dates, node_dict, coo_df):
             edge_weights.append(ew)
 
     return edge_weights
+
+
+def process_case_death_zipcode():
+    death_df = pd.read_csv(RAW_DEATH_MODZCTA_URL)
+    case_df = pd.read_csv(RAW_CASE_MODZCTA_URL)
+    totals_df = pd.read_csv(RAW_TOTALS_MODZCTA_URL)
+
+    case_long_df = pd.wide_to_long(case_df, stubnames='CASERATE', i='week_ending', j='MODIFIED_ZCTA', sep='_').reset_index()
+    death_long_df = pd.wide_to_long(death_df, stubnames='DEATHRATE', i='date', j='MODIFIED_ZCTA', sep='_').reset_index()
+
+    # merge population to convert from rates to counts (round to closest integer)
+    case_long_df = case_long_df.merge(totals_df[['MODIFIED_ZCTA','BOROUGH_GROUP','POP_DENOMINATOR']], how='left')
+    death_long_df = death_long_df.merge(totals_df[['MODIFIED_ZCTA','BOROUGH_GROUP','POP_DENOMINATOR']], how='left')
+
+    case_long_df['CASECOUNT'] = case_long_df['CASERATE'] * case_long_df['POP_DENOMINATOR'] / 100_000
+    death_long_df['DEATHCOUNT'] = death_long_df['DEATHRATE'] * death_long_df['POP_DENOMINATOR'] / 100_000
+
+    case_long_df['CASECOUNT'] = case_long_df['CASECOUNT'].round(1).astype(int)
+    death_long_df['DEATHCOUNT'] = death_long_df['DEATHCOUNT'].round(1)
+
+    # convert to pd datetime
+    case_long_df['week_ending'] = pd.to_datetime(case_long_df['week_ending'])
+    death_long_df['date'] = pd.to_datetime(death_long_df['date'])
+
+    # get just borough counts
+    borough_case_df = case_long_df.groupby(['week_ending', 'BOROUGH_GROUP'])[['CASECOUNT']].sum().reset_index()
+    borough_death_df = death_long_df.groupby(['date', 'BOROUGH_GROUP'])[['DEATHCOUNT']].sum().reset_index()
+
+    borough_case_df.rename(columns={'CASECOUNT': 'BOROUGH_CASECOUNT'}, inplace=True)
+    borough_death_df.rename(columns={'DEATHCOUNT': 'BOROUGH_DEATHCOUNT'}, inplace=True)
+
+    # get just borough rates
+    borough_case_long_df = case_long_df[['week_ending', 'CASERATE_BK', 'CASERATE_BX',
+        'CASERATE_CITY', 'CASERATE_MN', 'CASERATE_QN', 'CASERATE_SI']].drop_duplicates()
+    borough_case_long_df = pd.wide_to_long(borough_case_long_df, stubnames='CASERATE', sep='_', i='week_ending', j='BOROUGH_GROUP', suffix='\\D+').reset_index()
+
+    borough_death_long_df = death_long_df[['date', 'DEATHRATE_Bronx', 'DEATHRATE_Brooklyn',
+        'DEATHRATE_Citywide', 'DEATHRATE_Manhattan', 'DEATHRATE_Queens', 'DEATHRATE_Staten_Island']].drop_duplicates()
+    borough_death_long_df = pd.wide_to_long(borough_death_long_df, stubnames='DEATHRATE', sep='_', i='date', j='BOROUGH_GROUP', suffix='\\D+').reset_index()
+
+    # rename boroughs to match names in borough_pop_df
+    borough_abbrev_map = {
+        'BK': 'Bronx',
+        'BX': 'Brooklyn',
+        'CITY': 'CITY',
+        'MN': 'Manhattan',
+        'QN': 'Queens',
+        'SI': 'Staten Island', 
+    }
+    borough_case_long_df['BOROUGH_GROUP'] = borough_case_long_df['BOROUGH_GROUP'].map(borough_abbrev_map)
+
+    borough_death_long_df.loc[borough_death_long_df['BOROUGH_GROUP'] == 'Citywide', 'BOROUGH_GROUP'] = 'CITY'
+    borough_death_long_df.loc[borough_death_long_df['BOROUGH_GROUP'] == 'Staten_Island', 'BOROUGH_GROUP'] = 'Staten Island'
+
+    borough_case_long_df.rename(columns={'CASERATE':'BOROUGH_CASERATE'}, inplace=True)
+    borough_death_long_df.rename(columns={'DEATHRATE':'BOROUGH_DEATHRATE'}, inplace=True)
+
+    borough_case_df = borough_case_df.merge(borough_case_long_df, how='left')
+    borough_death_df = borough_death_df.merge(borough_death_long_df, how='left')
+
+    # create node key MZCTA-date
+    case_long_df["node_key"] = (
+        case_long_df["MODIFIED_ZCTA"].astype(str)
+        + "-"
+        + case_long_df["week_ending"].astype("str")
+    )
+
+    death_long_df["node_key"] = (
+            death_long_df["MODIFIED_ZCTA"].astype(str)
+            + "-"
+            + death_long_df["date"].astype("str")
+        )
+
+    nan_n = sum(death_long_df.DEATHCOUNT.isnull())
+    n = death_long_df.shape[0]
+    print(f'{nan_n} out of {n} ({(nan_n / n):2.2%}) of death rate data have nans')
+
+    # TODO: use borough or neighborhood-level death node features instead
+    death_long_df['DEATHCOUNT'] = death_long_df.DEATHCOUNT.fillna(0.)
+    death_long_df['DEATHRATE'] = death_long_df.DEATHRATE.fillna(0.)
+
+    return case_long_df, death_long_df
 
 
 def process_case_death_data():
