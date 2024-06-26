@@ -1,10 +1,6 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-24ddc0f5d75046c5622901739e7c5dd533143b0c8e959d652212380cedb1ea36.svg)](https://classroom.github.com/a/ifbeTrPr)
-# e6691-2024spring-project-cgnn-nhw2114
-
-For general requiremenets, refer to the [project instruction document](https://docs.google.com/document/d/1IqkNFUTRoI8xk0a-xawlIzA_QHHk5pZcRZY-q-zey1Q/edit?usp=share_link).
-
+# cgnn
 ## Deliverables
-- Students’ report - [e6691-2024spring-project-cgnn-nhw2114](#deliverables)
+- Students report - [e6691-2024spring-project-cgnn-nhw2114](#deliverables)
 - Students’ slides - [E6691.2024Spring.CGNN.nhw2114.presentationFinal](https://docs.google.com/presentation/d/1HNhcweCy0BCiZ24RSah8lsI6n9f_g-vdYaPZ-Pe3NV8/edit#slide=id.geb327816ab_0_0)
 - Papers: [Examining COVID-19 Forecasting using Spatio-Temporal Graph Neural Networks (2020)](https://arxiv.org/abs/2007.03113)
 - Github: [e6691-2024spring-project-cgnn-nhw2114](#deliverables)
