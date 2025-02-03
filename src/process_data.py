@@ -691,10 +691,10 @@ def process_case_death_data():
                 prev = pd.to_datetime(d) - deltaT * (dd + 1)
 
                 selection_current = (case_subset_df["FIPS"] == f) & (
-                    case_subset_df["date_of_interest"] == d
+                    pd.to_datetime(case_subset_df["date_of_interest"]) == d
                 )
                 selection_prev = (case_subset_df["FIPS"] == f) & (
-                    case_subset_df["date_of_interest"] == prev
+                    pd.to_datetime(case_subset_df["date_of_interest"]) == prev
                 )
                 if prev < pd.to_datetime(START_DATE):
                     prev_cases = 0
@@ -707,10 +707,10 @@ def process_case_death_data():
                 )
 
                 selection_current = (death_subset_df["FIPS"] == f) & (
-                    death_subset_df["date_of_interest"] == d
+                    pd.to_datetime(death_subset_df["date_of_interest"]) == d
                 )
                 selection_prev = (death_subset_df["FIPS"] == f) & (
-                    death_subset_df["date_of_interest"] == prev
+                    pd.to_datetime(death_subset_df["date_of_interest"]) == prev
                 )
                 if prev < pd.to_datetime(START_DATE):
                     prev_deaths = 0
