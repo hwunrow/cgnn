@@ -178,7 +178,7 @@ def create_torch_geometric_data(version, device="cpu", predict_delta=False):
 
     # make everything a tensor
     coo_t = torch.tensor(coo_df.values, dtype=torch.int64)
-    coo_t = coo_t.reshape((2, len(coo_df.values)))
+    coo_t = torch.transpose(coo_t, 0, 1)
 
     edge_weight_tensor = torch.tensor(edge_weights, dtype=torch.float32)
 
@@ -495,58 +495,118 @@ def process_case_death_zipcode():
     case_df = pd.read_csv(RAW_CASE_MODZCTA_URL)
     totals_df = pd.read_csv(RAW_TOTALS_MODZCTA_URL)
 
-    case_long_df = pd.wide_to_long(case_df, stubnames='CASERATE', i='week_ending', j='MODIFIED_ZCTA', sep='_').reset_index()
-    death_long_df = pd.wide_to_long(death_df, stubnames='DEATHRATE', i='date', j='MODIFIED_ZCTA', sep='_').reset_index()
+    case_long_df = pd.wide_to_long(
+        case_df, stubnames="CASERATE", i="week_ending", j="MODIFIED_ZCTA", sep="_"
+    ).reset_index()
+    death_long_df = pd.wide_to_long(
+        death_df, stubnames="DEATHRATE", i="date", j="MODIFIED_ZCTA", sep="_"
+    ).reset_index()
 
     # merge population to convert from rates to counts (round to closest integer)
-    case_long_df = case_long_df.merge(totals_df[['MODIFIED_ZCTA','BOROUGH_GROUP','POP_DENOMINATOR']], how='left')
-    death_long_df = death_long_df.merge(totals_df[['MODIFIED_ZCTA','BOROUGH_GROUP','POP_DENOMINATOR']], how='left')
+    case_long_df = case_long_df.merge(
+        totals_df[["MODIFIED_ZCTA", "BOROUGH_GROUP", "POP_DENOMINATOR"]], how="left"
+    )
+    death_long_df = death_long_df.merge(
+        totals_df[["MODIFIED_ZCTA", "BOROUGH_GROUP", "POP_DENOMINATOR"]], how="left"
+    )
 
-    case_long_df['CASECOUNT'] = case_long_df['CASERATE'] * case_long_df['POP_DENOMINATOR'] / 100_000
-    death_long_df['DEATHCOUNT'] = death_long_df['DEATHRATE'] * death_long_df['POP_DENOMINATOR'] / 100_000
+    case_long_df["CASECOUNT"] = (
+        case_long_df["CASERATE"] * case_long_df["POP_DENOMINATOR"] / 100_000
+    )
+    death_long_df["DEATHCOUNT"] = (
+        death_long_df["DEATHRATE"] * death_long_df["POP_DENOMINATOR"] / 100_000
+    )
 
-    case_long_df['CASECOUNT'] = case_long_df['CASECOUNT'].round(1).astype(int)
-    death_long_df['DEATHCOUNT'] = death_long_df['DEATHCOUNT'].round(1)
+    case_long_df["CASECOUNT"] = case_long_df["CASECOUNT"].round(1).astype(int)
+    death_long_df["DEATHCOUNT"] = death_long_df["DEATHCOUNT"].round(1)
 
     # convert to pd datetime
-    case_long_df['week_ending'] = pd.to_datetime(case_long_df['week_ending'])
-    death_long_df['date'] = pd.to_datetime(death_long_df['date'])
+    case_long_df["week_ending"] = pd.to_datetime(case_long_df["week_ending"])
+    death_long_df["date"] = pd.to_datetime(death_long_df["date"])
 
     # get just borough counts
-    borough_case_df = case_long_df.groupby(['week_ending', 'BOROUGH_GROUP'])[['CASECOUNT']].sum().reset_index()
-    borough_death_df = death_long_df.groupby(['date', 'BOROUGH_GROUP'])[['DEATHCOUNT']].sum().reset_index()
+    borough_case_df = (
+        case_long_df.groupby(["week_ending", "BOROUGH_GROUP"])[["CASECOUNT"]]
+        .sum()
+        .reset_index()
+    )
+    borough_death_df = (
+        death_long_df.groupby(["date", "BOROUGH_GROUP"])[["DEATHCOUNT"]]
+        .sum()
+        .reset_index()
+    )
 
-    borough_case_df.rename(columns={'CASECOUNT': 'BOROUGH_CASECOUNT'}, inplace=True)
-    borough_death_df.rename(columns={'DEATHCOUNT': 'BOROUGH_DEATHCOUNT'}, inplace=True)
+    borough_case_df.rename(columns={"CASECOUNT": "BOROUGH_CASECOUNT"}, inplace=True)
+    borough_death_df.rename(columns={"DEATHCOUNT": "BOROUGH_DEATHCOUNT"}, inplace=True)
 
     # get just borough rates
-    borough_case_long_df = case_long_df[['week_ending', 'CASERATE_BK', 'CASERATE_BX',
-        'CASERATE_CITY', 'CASERATE_MN', 'CASERATE_QN', 'CASERATE_SI']].drop_duplicates()
-    borough_case_long_df = pd.wide_to_long(borough_case_long_df, stubnames='CASERATE', sep='_', i='week_ending', j='BOROUGH_GROUP', suffix='\\D+').reset_index()
+    borough_case_long_df = case_long_df[
+        [
+            "week_ending",
+            "CASERATE_BK",
+            "CASERATE_BX",
+            "CASERATE_CITY",
+            "CASERATE_MN",
+            "CASERATE_QN",
+            "CASERATE_SI",
+        ]
+    ].drop_duplicates()
+    borough_case_long_df = pd.wide_to_long(
+        borough_case_long_df,
+        stubnames="CASERATE",
+        sep="_",
+        i="week_ending",
+        j="BOROUGH_GROUP",
+        suffix="\\D+",
+    ).reset_index()
 
-    borough_death_long_df = death_long_df[['date', 'DEATHRATE_Bronx', 'DEATHRATE_Brooklyn',
-        'DEATHRATE_Citywide', 'DEATHRATE_Manhattan', 'DEATHRATE_Queens', 'DEATHRATE_Staten_Island']].drop_duplicates()
-    borough_death_long_df = pd.wide_to_long(borough_death_long_df, stubnames='DEATHRATE', sep='_', i='date', j='BOROUGH_GROUP', suffix='\\D+').reset_index()
+    borough_death_long_df = death_long_df[
+        [
+            "date",
+            "DEATHRATE_Bronx",
+            "DEATHRATE_Brooklyn",
+            "DEATHRATE_Citywide",
+            "DEATHRATE_Manhattan",
+            "DEATHRATE_Queens",
+            "DEATHRATE_Staten_Island",
+        ]
+    ].drop_duplicates()
+    borough_death_long_df = pd.wide_to_long(
+        borough_death_long_df,
+        stubnames="DEATHRATE",
+        sep="_",
+        i="date",
+        j="BOROUGH_GROUP",
+        suffix="\\D+",
+    ).reset_index()
 
     # rename boroughs to match names in borough_pop_df
     borough_abbrev_map = {
-        'BK': 'Bronx',
-        'BX': 'Brooklyn',
-        'CITY': 'CITY',
-        'MN': 'Manhattan',
-        'QN': 'Queens',
-        'SI': 'Staten Island', 
+        "BK": "Bronx",
+        "BX": "Brooklyn",
+        "CITY": "CITY",
+        "MN": "Manhattan",
+        "QN": "Queens",
+        "SI": "Staten Island",
     }
-    borough_case_long_df['BOROUGH_GROUP'] = borough_case_long_df['BOROUGH_GROUP'].map(borough_abbrev_map)
+    borough_case_long_df["BOROUGH_GROUP"] = borough_case_long_df["BOROUGH_GROUP"].map(
+        borough_abbrev_map
+    )
 
-    borough_death_long_df.loc[borough_death_long_df['BOROUGH_GROUP'] == 'Citywide', 'BOROUGH_GROUP'] = 'CITY'
-    borough_death_long_df.loc[borough_death_long_df['BOROUGH_GROUP'] == 'Staten_Island', 'BOROUGH_GROUP'] = 'Staten Island'
+    borough_death_long_df.loc[
+        borough_death_long_df["BOROUGH_GROUP"] == "Citywide", "BOROUGH_GROUP"
+    ] = "CITY"
+    borough_death_long_df.loc[
+        borough_death_long_df["BOROUGH_GROUP"] == "Staten_Island", "BOROUGH_GROUP"
+    ] = "Staten Island"
 
-    borough_case_long_df.rename(columns={'CASERATE':'BOROUGH_CASERATE'}, inplace=True)
-    borough_death_long_df.rename(columns={'DEATHRATE':'BOROUGH_DEATHRATE'}, inplace=True)
+    borough_case_long_df.rename(columns={"CASERATE": "BOROUGH_CASERATE"}, inplace=True)
+    borough_death_long_df.rename(
+        columns={"DEATHRATE": "BOROUGH_DEATHRATE"}, inplace=True
+    )
 
-    borough_case_df = borough_case_df.merge(borough_case_long_df, how='left')
-    borough_death_df = borough_death_df.merge(borough_death_long_df, how='left')
+    borough_case_df = borough_case_df.merge(borough_case_long_df, how="left")
+    borough_death_df = borough_death_df.merge(borough_death_long_df, how="left")
 
     # create node key MZCTA-date
     case_long_df["node_key"] = (
@@ -556,18 +616,18 @@ def process_case_death_zipcode():
     )
 
     death_long_df["node_key"] = (
-            death_long_df["MODIFIED_ZCTA"].astype(str)
-            + "-"
-            + death_long_df["date"].astype("str")
-        )
+        death_long_df["MODIFIED_ZCTA"].astype(str)
+        + "-"
+        + death_long_df["date"].astype("str")
+    )
 
     nan_n = sum(death_long_df.DEATHCOUNT.isnull())
     n = death_long_df.shape[0]
-    print(f'{nan_n} out of {n} ({(nan_n / n):2.2%}) of death rate data have nans')
+    print(f"{nan_n} out of {n} ({(nan_n / n):2.2%}) of death rate data have nans")
 
     # TODO: use borough or neighborhood-level death node features instead
-    death_long_df['DEATHCOUNT'] = death_long_df.DEATHCOUNT.fillna(0.)
-    death_long_df['DEATHRATE'] = death_long_df.DEATHRATE.fillna(0.)
+    death_long_df["DEATHCOUNT"] = death_long_df.DEATHCOUNT.fillna(0.0)
+    death_long_df["DEATHRATE"] = death_long_df.DEATHRATE.fillna(0.0)
 
     return case_long_df, death_long_df
 
