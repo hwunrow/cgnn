@@ -2,6 +2,7 @@ import pandas as pd
 import pickle
 from codebook import BOROUGH_FIPS_MAP
 from datetime import datetime
+import math
 
 
 def get_date_range(start, end):
@@ -37,11 +38,11 @@ def get_node_pos(version, idx):
     borough = get_node_borough(version, idx)
 
     borough_positions = {
-        "36005": (0, 0),
-        "36047": (0.25, 0.25),
-        "36061": (0, 0.5),
-        "36081": (0.25, 0.75),
-        "36085": (0.5, 1),
+        "36005": (math.cos(0), math.sin(0)),
+        "36047": (math.cos(2 * math.pi / 5), math.sin(2 * math.pi / 5)),
+        "36061": (math.cos(4 * math.pi / 5), math.sin(4 * math.pi / 5)),
+        "36081": (math.cos(6 * math.pi / 5), math.sin(6 * math.pi / 5)),
+        "36085": (math.cos(8 * math.pi / 5), math.sin(8 * math.pi / 5)),
     }
 
     pos_x, pos_y = borough_positions[borough]
@@ -51,7 +52,7 @@ def get_node_pos(version, idx):
     date = datetime.strptime(date, "%Y-%m-%d")
     delta_days = (date - reference_date).days
 
-    pos_x += delta_days
+    pos_x += 2 * delta_days
 
     return (pos_x, pos_y)
 
