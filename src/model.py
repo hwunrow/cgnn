@@ -2,7 +2,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch_geometric.nn import GCNConv
-from torch_geometric_temporal.nn.recurrent.attentiontemporalgcn import A3TGCN
+
+# from torch_geometric_temporal.nn.recurrent.attentiontemporalgcn import A3TGCN
 
 import pandas as pd
 import process_data
@@ -44,7 +45,7 @@ class AttentionGCN(torch.nn.Module):
         h = delta + x[:, 1, -1].unsqueeze(1)
         out = h.relu()
 
-        return out, delta
+        return out
 
 
 class GCN(nn.Module):
@@ -75,7 +76,7 @@ class GCN(nn.Module):
         h = delta + x[:, 1].unsqueeze(1)
         out = h.relu()
 
-        return out, delta
+        return out
 
 
 class prevCase(nn.Module):
@@ -123,4 +124,4 @@ class prevDelta(nn.Module):
         out = torch.tensor(pred_df["pred"].values, dtype=torch.float32)
         delta = torch.tensor(pred_df["CASE_DELTA"].values, dtype=torch.float32)
 
-        return out, delta
+        return out
