@@ -23,8 +23,8 @@ TRAIN_SPLIT_IDX = 60
 TIME_WINDOW_SIZE = 7
 
 
-RAW_DEATH_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deaths-by-day.csv"
-RAW_CASE_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/cases-by-day.csv"
+RAW_DEATH_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
+RAW_CASE_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
 RAW_DEATH_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deathrate-by-modzcta.csv"
 RAW_CASE_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/caserate-by-modzcta.csv"
 RAW_TOTALS_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/9fd8f9ca85a4f0cd7671c4872063cb525eacc42f/totals/data-by-modzcta.csv"
@@ -655,155 +655,132 @@ def process_case_death_data():
     death_df = pd.read_csv(RAW_DEATH_URL)
     case_df = pd.read_csv(RAW_CASE_URL)
 
-    death_df["date_of_interest"] = pd.to_datetime(death_df["date_of_interest"])
-    case_df["date_of_interest"] = pd.to_datetime(case_df["date_of_interest"])
-
-    subset_cols = [
-        "date_of_interest",
-        "BX_DEATH_COUNT",
-        "BX_DEATH_COUNT_7DAY_AVG",
-        "BK_DEATH_COUNT",
-        "BK_DEATH_COUNT_7DAY_AVG",
-        "MN_DEATH_COUNT",
-        "MN_DEATH_COUNT_7DAY_AVG",
-        "QN_DEATH_COUNT",
-        "QN_DEATH_COUNT_7DAY_AVG",
-        "SI_DEATH_COUNT",
-        "SI_DEATH_COUNT_7DAY_AVG",
-    ]
-    death_subset_df = death_df.loc[
-        (START_DATE <= death_df["date_of_interest"])
-        & (death_df["date_of_interest"] <= END_DATE),
-        subset_cols,
-    ]
-    death_subset_df = pd.melt(death_subset_df, id_vars=["date_of_interest"])
-    death_subset_df[["borough", "metric"]] = death_subset_df["variable"].str.split(
-        "_", n=1, expand=True
+    # fill in FIPS code for using the last 5 digits of the UID code
+    death_df["FIPS"] = death_df["FIPS"].fillna(
+        death_df["UID"].astype(str).str[-5:].astype(int)
     )
-    death_subset_df = death_subset_df.pivot(
-        index=["date_of_interest", "borough"], columns="metric", values="value"
-    ).reset_index()
-
-    death_subset_df["FIPS"] = death_subset_df["borough"].map(BOROUGH_FIPS_MAP)
-
-    death_subset_df["node_key"] = (
-        death_subset_df["FIPS"].astype(str)
-        + "-"
-        + death_subset_df["date_of_interest"].astype("str")
+    case_df["FIPS"] = case_df["FIPS"].fillna(
+        case_df["UID"].astype(str).str[-5:].astype(int)
     )
-    long_cols = [
-        "date_of_interest",
-        "FIPS",
-        "node_key",
-        "DEATH_COUNT",
-        "DEATH_COUNT_7DAY_AVG",
-    ]
-    death_subset_df = death_subset_df[long_cols]
 
-    subset_cols = [
-        "date_of_interest",
-        "BX_CASE_COUNT",
-        "BX_CASE_COUNT_7DAY_AVG",
-        "BK_CASE_COUNT",
-        "BK_CASE_COUNT_7DAY_AVG",
-        "MN_CASE_COUNT",
-        "MN_CASE_COUNT_7DAY_AVG",
-        "QN_CASE_COUNT",
-        "QN_CASE_COUNT_7DAY_AVG",
-        "SI_CASE_COUNT",
-        "SI_CASE_COUNT_7DAY_AVG",
-    ]
-    case_subset_df = case_df.loc[
-        (START_DATE <= case_df["date_of_interest"])
-        & (case_df["date_of_interest"] <= END_DATE),
-        subset_cols,
-    ]
-    case_subset_df = pd.melt(case_subset_df, id_vars=["date_of_interest"])
-    case_subset_df[["borough", "metric"]] = case_subset_df["variable"].str.split(
-        "_", n=1, expand=True
+    death_df["FIPS"] = death_df["FIPS"].astype(int)
+    case_df["FIPS"] = case_df["FIPS"].astype(int)
+
+    death_df = pd.melt(
+        death_df,
+        id_vars=death_df.columns[:12],
+        var_name="date",
+        value_name="DEATH_COUNT",
     )
-    case_subset_df = case_subset_df.pivot(
-        index=["date_of_interest", "borough"], columns="metric", values="value"
-    ).reset_index()
-
-    case_subset_df["FIPS"] = case_subset_df["borough"].map(BOROUGH_FIPS_MAP)
-    case_subset_df["node_key"] = (
-        case_subset_df["FIPS"].astype(str)
-        + "-"
-        + case_subset_df["date_of_interest"].astype("str")
+    case_df = pd.melt(
+        case_df, id_vars=case_df.columns[:11], var_name="date", value_name="CASE_COUNT"
     )
-    long_cols = [
-        "date_of_interest",
-        "FIPS",
-        "node_key",
-        "CASE_COUNT",
-        "CASE_COUNT_7DAY_AVG",
+
+    death_df["date"] = pd.to_datetime(death_df["date"], format="%m/%d/%y")
+    case_df["date"] = pd.to_datetime(case_df["date"], format="%m/%d/%y")
+
+    death_df = death_df.loc[
+        (
+            pd.to_datetime(START_DATE) - pd.Timedelta(days=TIME_WINDOW_SIZE + 1)
+            <= death_df["date"]
+        )
+        & (death_df["date"] <= END_DATE)
+    ]
+    case_df = case_df.loc[
+        (
+            pd.to_datetime(START_DATE) - pd.Timedelta(days=TIME_WINDOW_SIZE + 1)
+            <= case_df["date"]
+        )
+        & (case_df["date"] <= END_DATE)
     ]
 
-    case_subset_df = case_subset_df[long_cols]
+    death_df["node_key"] = (
+        death_df["FIPS"].astype(str) + "-" + death_df["date"].astype("str")
+    )
+    case_df["node_key"] = (
+        case_df["FIPS"].astype(str) + "-" + case_df["date"].astype("str")
+    )
 
-    deltaT = pd.Timedelta(value=1, unit="D")
-    dates = get_date_range(START_DATE, END_DATE)
+    # fix since the counts are reported as cummulative
+    death_df.sort_values(by=["FIPS", "date"], inplace=True)
+    case_df.sort_values(by=["FIPS", "date"], inplace=True)
 
-    for f in list(BOROUGH_FIPS_MAP.values()):
-        for d in dates:
-            for dd in range(TIME_WINDOW_SIZE - 1):
-                prev = pd.to_datetime(d) - deltaT * (dd + 1)
+    death_df["DEATH_COUNT"] = death_df.groupby("FIPS")["DEATH_COUNT"].diff().fillna(0)
+    case_df["CASE_COUNT"] = case_df.groupby("FIPS")["CASE_COUNT"].diff().fillna(0)
 
-                selection_current = (case_subset_df["FIPS"] == f) & (
-                    pd.to_datetime(case_subset_df["date_of_interest"]) == d
-                )
-                selection_prev = (case_subset_df["FIPS"] == f) & (
-                    pd.to_datetime(case_subset_df["date_of_interest"]) == prev
-                )
-                if prev < pd.to_datetime(START_DATE):
-                    prev_cases = 0
-                else:
-                    prev_cases = case_subset_df.loc[
-                        selection_prev, "CASE_COUNT"
-                    ].values[0]
-                case_subset_df.loc[selection_current, f"CASE_COUNT_PREV_{dd}"] = (
-                    prev_cases
-                )
-
-                selection_current = (death_subset_df["FIPS"] == f) & (
-                    pd.to_datetime(death_subset_df["date_of_interest"]) == d
-                )
-                selection_prev = (death_subset_df["FIPS"] == f) & (
-                    pd.to_datetime(death_subset_df["date_of_interest"]) == prev
-                )
-                if prev < pd.to_datetime(START_DATE):
-                    prev_deaths = 0
-                else:
-                    prev_deaths = death_subset_df.loc[
-                        selection_prev, "DEATH_COUNT"
-                    ].values[0]
-                death_subset_df.loc[selection_current, f"DEATH_COUNT_PREV_{dd}"] = (
-                    prev_deaths
-                )
+    for dd in range(TIME_WINDOW_SIZE - 1):
+        case_df[f"CASE_COUNT_PREV_{dd}"] = (
+            case_df.groupby("FIPS")["CASE_COUNT"].shift(dd + 1).fillna(0)
+        )
+        death_df[f"DEATH_COUNT_PREV_{dd}"] = (
+            death_df.groupby("FIPS")["DEATH_COUNT"].shift(dd + 1).fillna(0)
+        )
 
     # correct the 7 day average so that it's not rounding to integers
-    case_subset_df["CASE_COUNT_7DAY_AVG"] = case_subset_df[
-        [f"CASE_COUNT_PREV_{i}" for i in range(6)] + ["CASE_COUNT"]
+    case_df[f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"] = case_df[
+        [f"CASE_COUNT_PREV_{i}" for i in range(TIME_WINDOW_SIZE - 1)] + ["CASE_COUNT"]
     ].mean(axis=1)
-    death_subset_df["DEATH_COUNT_7DAY_AVG"] = death_subset_df[
-        [f"DEATH_COUNT_PREV_{i}" for i in range(6)] + ["DEATH_COUNT"]
+    death_df[f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"] = death_df[
+        [f"DEATH_COUNT_PREV_{i}" for i in range(TIME_WINDOW_SIZE - 1)] + ["DEATH_COUNT"]
     ].mean(axis=1)
 
     # compute deltas
-    case_subset_df = case_subset_df.sort_values(by=["date_of_interest", "FIPS"])
-    case_subset_df["CASE_DELTA"] = (
-        case_subset_df.groupby(["FIPS"])["CASE_COUNT_7DAY_AVG"].diff(-1).fillna(0)
+    case_df = case_df.sort_values(by=["date", "FIPS"])
+    case_df["CASE_DELTA"] = (
+        case_df.groupby(["FIPS"])[f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
+        .diff(-1)
+        .fillna(0)
     )
-    case_subset_df["CASE_DELTA"] = case_subset_df["CASE_DELTA"] * -1
+    case_df["CASE_DELTA"] = case_df["CASE_DELTA"] * -1
 
-    death_subset_df = death_subset_df.sort_values(by=["date_of_interest", "FIPS"])
-    death_subset_df["DEATH_DELTA"] = (
-        death_subset_df.groupby(["FIPS"])["DEATH_COUNT_7DAY_AVG"].diff(-1).fillna(0)
+    death_df = death_df.sort_values(by=["date", "FIPS"])
+    death_df["DEATH_DELTA"] = (
+        death_df.groupby(["FIPS"])[f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
+        .diff(-1)
+        .fillna(0)
     )
-    death_subset_df["DEATH_DELTA"] = death_subset_df["DEATH_DELTA"] * -1
+    death_df["DEATH_DELTA"] = death_df["DEATH_DELTA"] * -1
 
-    death_subset_df.reset_index(inplace=True)
-    case_subset_df.reset_index(inplace=True)
+    death_subset_cols = [
+        "date",
+        "FIPS",
+        "Province_State",
+        "node_key",
+        "DEATH_DELTA",
+        f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG",
+        "DEATH_COUNT",
+        "DEATH_COUNT_PREV_0",
+        "DEATH_COUNT_PREV_1",
+        "DEATH_COUNT_PREV_2",
+        "DEATH_COUNT_PREV_3",
+        "DEATH_COUNT_PREV_4",
+        "DEATH_COUNT_PREV_5",
+    ]
+    case_subset_cols = [
+        "date",
+        "FIPS",
+        "Province_State",
+        "node_key",
+        "CASE_DELTA",
+        f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG",
+        "CASE_COUNT",
+        "CASE_COUNT_PREV_0",
+        "CASE_COUNT_PREV_1",
+        "CASE_COUNT_PREV_2",
+        "CASE_COUNT_PREV_3",
+        "CASE_COUNT_PREV_4",
+        "CASE_COUNT_PREV_5",
+    ]
+    death_df = death_df.loc[
+        (START_DATE <= death_df["date"]) & (death_df["date"] <= END_DATE),
+        death_subset_cols,
+    ]
+    case_df = case_df.loc[
+        (START_DATE <= case_df["date"]) & (case_df["date"] <= END_DATE),
+        case_subset_cols,
+    ]
 
-    return death_subset_df, case_subset_df
+    death_df.reset_index(inplace=True, drop=True)
+    case_df.reset_index(inplace=True, drop=True)
+
+    return death_df, case_df
