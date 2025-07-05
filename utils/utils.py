@@ -5,16 +5,23 @@ from datetime import datetime
 import math
 
 
-def get_date_range(start, end):
+def get_date_range(start, end, day_of_week="MON"):
     start_date = pd.to_datetime(start)
     end_date = pd.to_datetime(end)
-    dates = pd.date_range(start=start_date, end=end_date, freq="D")
+    dates = pd.date_range(
+        start=start_date, end=end_date, freq=f"W-{day_of_week.upper()}"
+    )
     return dates
 
 
 def get_fips_list():
     fips_list = list(BOROUGH_FIPS_MAP.values())
     return fips_list
+
+
+def get_cbsa_list():
+    cbsa_list = list(.values())
+    return cbsa_list
 
 
 def get_node_date(version, idx):
