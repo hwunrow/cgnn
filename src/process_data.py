@@ -7,53 +7,116 @@ import pickle
 from tqdm import tqdm
 import sys
 
+from sklearn.decomposition import PCA
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+
 import torch
 from torch_geometric.data import Data
 
 # from torch_geometric_temporal.signal import DynamicGraphTemporalSignal
 
 sys.path.append("../utils/")
-from utils import get_date_range, get_fips_list
-from codebook import BOROUGH_FIPS_MAP, BOROUGH_FULL_FIPS_DICT, NODE_IDX_FIPS_MAP
+from utils import get_date_range, get_cbsa_list
+from codebook import TITLE_CBSA_MAP
+from process_xwalk import get_county_cbsa_map
 
 # TODO don't hardcode these values, make them a YAML file that is saved
 START_DATE = "02/29/2020"
-END_DATE = "05/30/2020"
-TRAIN_SPLIT_IDX = 60
+END_DATE = "12/31/2022"
+TRAIN_SPLIT_IDX = 672
 TIME_WINDOW_SIZE = 7
-
 
 RAW_DEATH_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
 RAW_CASE_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
 RAW_DEATH_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deathrate-by-modzcta.csv"
 RAW_CASE_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/caserate-by-modzcta.csv"
 RAW_TOTALS_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/9fd8f9ca85a4f0cd7671c4872063cb525eacc42f/totals/data-by-modzcta.csv"
-RAW_SAFEGRAPH_DIR = "../data/raw/mobility/"
-RAW_MOBILITY_REPORT_FILE = "../data/raw/2020_US_Region_Mobility_Report.csv"
+RAW_SAFEGRAPH_FILE = "../data/raw/mobility/all_harddrive_us.csv"
+RAW_MOBILITY_REPORT_DIR = "../data/raw/google_mobility_reports/"
+
+POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
+
+ZIP_CBSA_PATH = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/ZIP_CBSA_122024.csv"
+ZIP_COUNTY_PATH = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/ZIP_COUNTY_122024.csv"
 
 
-# def create_torch_geometric_temporal_data(device="cpu", processed_path=None):
+# def get_county_cbsa_map():
 #     """
-#     Creates a torch geometric DynamicGraphTemporalSignal object representing temporal
-#     signals (temporal node features) defined on a dynamic graph (changing edge weights).
+#     Creates a mapping between counties and Core-Based Statistical Areas (CBSAs).
 
-#     Args:
-#         device (str, optional): The device to store the data (default is "cpu").
-#         processed_path (str, optional): Path to the processed data (default is None).
+#     This function reads ZIP to CBSA and ZIP to county mapping data from CSV files,
+#     processes the data to ensure unique mappings, and resolves any conflicts where
+#     a county is mapped to multiple CBSAs by selecting the CBSA with the most ZIPs.
+#     The resulting mapping is returned as a DataFrame.
 
 #     Returns:
-#         DynamicGraphTemporalSignal: A torch geometric temporal data object.
+#         pandas.DataFrame: A DataFrame with columns 'COUNTY' and 'CBSA', representing
+#         the unique mapping between counties and CBSAs.
 #     """
-#     dates = get_date_range(START_DATE, END_DATE)
-#     node_dict = create_node_key()
+#     DTYPE = {
+#         "ZIP": "str",
+#         "CBSA": "str",
+#     }
+#     zip_cbsa_map = pd.read_csv(ZIP_CBSA_PATH, dtype=DTYPE)
+#     zip_cbsa_map = zip_cbsa_map.sort_values(
+#         ["ZIP", "RES_RATIO"], ascending=[True, False]
+#     )
+#     zip_cbsa_map = zip_cbsa_map.drop_duplicates(subset="ZIP", keep="first")
 
-#     edge_indices = create_edge_indices(dates)
-#     edge_weights = create_edge_weights(dates, edge_indices[0])
-#     features, targets = create_features_targets(dates, node_dict)
+#     DTYPE = {
+#         "ZIP": "str",
+#         "COUNTY": "str",
+#     }
+#     zip_county_map = pd.read_csv(ZIP_COUNTY_PATH, dtype=DTYPE)
+#     zip_county_map = zip_county_map.sort_values(
+#         ["ZIP", "RES_RATIO"], ascending=[True, False]
+#     )
+#     zip_county_map = zip_county_map.drop_duplicates(subset="ZIP", keep="first")
 
-#     data = DynamicGraphTemporalSignal(edge_indices, edge_weights, features, targets)
+#     county_cbsa_map = zip_county_map[["ZIP", "COUNTY"]].merge(
+#         zip_cbsa_map[["ZIP", "CBSA"]], on="ZIP", how="inner"
+#     )
+#     county_cbsa_map = county_cbsa_map[["COUNTY", "CBSA"]].drop_duplicates()
 
-#     return data
+#     print("unique ZIPs in zip-cbsa map:", zip_cbsa_map.ZIP.nunique())
+#     print("unique ZIPs in zip-county map:", zip_county_map.ZIP.nunique())
+#     print(
+#         "num zips in cbsa but not county:",
+#         len(set(zip_cbsa_map.ZIP.unique()) - set(zip_county_map.ZIP.unique())),
+#     )
+#     print(
+#         "num zips in county but not cbsa:",
+#         len(set(zip_county_map.ZIP.unique()) - set(zip_cbsa_map.ZIP.unique())),
+#     )
+#     print(set(zip_county_map.ZIP.unique()) - set(zip_cbsa_map.ZIP.unique()))
+
+#     # fix mapping for counties that are mapped to multiple CBSAs
+#     counts = county_cbsa_map.COUNTY.value_counts()
+#     duplicate_counties = counts[counts > 1].index.tolist()
+#     fix_map = {}
+#     for county in duplicate_counties:
+#         # choose the CBSA that has the most ZIPs
+#         cbsa_count = (
+#             zip_cbsa_map.loc[
+#                 zip_cbsa_map.ZIP.isin(
+#                     zip_county_map.loc[zip_county_map.COUNTY == county, "ZIP"]
+#                 )
+#             ]
+#             .groupby("CBSA")["ZIP"]
+#             .count()
+#         )
+#         correct_cbsa_map = cbsa_count.idxmax()
+#         fix_map[county] = correct_cbsa_map
+
+#     county_cbsa_map["CBSA"] = (
+#         county_cbsa_map.COUNTY.map(fix_map).fillna(county_cbsa_map["CBSA"]).astype(int)
+#     )
+#     county_cbsa_map = county_cbsa_map.drop_duplicates()
+
+#     assert county_cbsa_map.COUNTY.nunique() == county_cbsa_map.shape[0]
+
+#     return county_cbsa_map
 
 
 def create_edge_indices(dates):
@@ -78,51 +141,6 @@ def create_edge_indices(dates):
     edge_indices_list = [edge_indices for _ in range(len(dates))]
 
     return edge_indices_list
-
-
-def create_edge_weights(dates, edge_snapshot):
-    """
-    Creates edge weights for a dynamic graph given a list of dates and an edge snapshot.
-
-    Args:
-        dates (list of datetime): List of dates.
-        edge_snapshot (numpy.ndarray): Edge indices array for K_5 complete graph.
-
-    Returns:
-        list of numpy.ndarray: List of edge weights arrays for each snapshot.
-    """
-    mobility_files = glob.glob(f"{RAW_SAFEGRAPH_DIR}/*.csv")
-    mobility_dates = [os.path.basename(f).split("_")[0] for f in mobility_files]
-    mobility_dates = pd.to_datetime(mobility_dates)
-    mobility_dates = mobility_dates.sort_values()
-
-    day_mobility_dict = dict()
-    for d in dates:
-        next_sunday = d + pd.offsets.Week(n=0, weekday=0)
-        day_key = d.strftime("%Y-%m-%d")
-        day_mobility_dict[day_key] = next_sunday.strftime("%Y-%m-%d") + "_mobility.csv"
-
-    edge_weights = []
-
-    for d in tqdm(dates):
-        df = pd.read_csv(
-            RAW_SAFEGRAPH_DIR + day_mobility_dict[dates[0].strftime("%Y-%m-%d")]
-        )
-
-        edge_weight_snapshot = np.zeros(shape=edge_snapshot.shape[1])
-        for i, column in enumerate(edge_snapshot.T):
-            orig_idx, dest_idx = column
-            edge_weight_snapshot[i] = df.loc[
-                (df.origin == BOROUGH_FULL_FIPS_DICT[NODE_IDX_FIPS_MAP[orig_idx]])
-                & (
-                    df.destination
-                    == BOROUGH_FULL_FIPS_DICT[NODE_IDX_FIPS_MAP[dest_idx]]
-                ),
-                "visitor_home_aggregation",
-            ].values[0]
-        edge_weights.append(edge_weight_snapshot)
-
-    return edge_weights
 
 
 def create_features_targets(dates, node_dict):
@@ -155,15 +173,18 @@ def create_features_targets(dates, node_dict):
 
 def create_torch_geometric_data(version, device="cpu", predict_delta=False):
     dates = get_date_range(START_DATE, END_DATE)
-    fips_list = get_fips_list()
+    cbsa_list = get_cbsa_list()
 
     # process data
     death_subset_df, case_subset_df = process_case_death_data()
     node_dict = create_node_key()
-    nyc_mobility_report_df = process_mobility_report()
-    coo_df = create_edge_index(node_dict, dates, fips_list)
+    mobility_report_df = process_mobility_report()
+    print("creating coo_df")
+    # TODO: do not make it a complete graph (this is CRAZY)
+    coo_df = create_edge_index(node_dict, dates, cbsa_list)
+    print("processing safegraph data")
     edge_weights = process_safegraph_data(dates, node_dict, coo_df)
-    train_mask, test_mask = create_train_test_mask(node_dict, dates, fips_list)
+    train_mask, test_mask = create_train_test_mask(node_dict, dates, cbsa_list)
     save_data(
         death_subset_df,
         case_subset_df,
@@ -207,12 +228,8 @@ def create_torch_geometric_data(version, device="cpu", predict_delta=False):
         "DEATH_COUNT_PREV_3",
         "DEATH_COUNT_PREV_4",
         "DEATH_COUNT_PREV_5",
-        "retail_and_recreation_percent_change_from_baseline",
-        "grocery_and_pharmacy_percent_change_from_baseline",
-        "parks_percent_change_from_baseline",
-        "transit_stations_percent_change_from_baseline",
-        "workplaces_percent_change_from_baseline",
-        "residential_percent_change_from_baseline",
+        "mobility_pc1_full_dat",
+        "mobility_pc2_full_dat",
     ]
     x_t[x_t_cols].to_csv(f"../data/processed/{version}/x_t.csv", index=False)
     x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
@@ -277,14 +294,14 @@ def create_node_key():
         dict: A dictionary mapping node keys to vertex indices.
     """
     dates = get_date_range(START_DATE, END_DATE)
-    fips_list = get_fips_list()
+    cbsa_list = get_cbsa_list()
 
     node_dict = dict()
 
     curr_idx = 0
     for d in dates:
-        for f in fips_list:
-            key_str = f"{f}-{d.strftime('%Y-%m-%d')}"
+        for c in cbsa_list:
+            key_str = f"{c}-{d.strftime('%Y-%m-%d')}"
             node_dict[key_str] = curr_idx
             curr_idx += 1
 
@@ -343,7 +360,7 @@ def create_edge_index(node_dict, dates, fips_list):
     coo_list = []
 
     # create spatial edges (all boroughs are connected to each other)
-    for d in dates:
+    for d in tqdm(dates):
         for u in fips_list:
             for v in fips_list:
                 u_key = f"{u}-{d.strftime('%Y-%m-%d')}"
@@ -382,51 +399,213 @@ def create_edge_index(node_dict, dates, fips_list):
 
 def process_mobility_report():
     """
-    Processes Google Community Mobility Reports data for New York City.
+    Processes Google Community Mobility Reports data for all counties.
 
-    Reads the raw mobility report data from RAW_MOBILITY_REPORT_FILE, converts the 'date'
-    column to datetime format, and extracts data for New York City counties within the
+    Reads the raw mobility report data from RAW_MOBILITY_REPORT_DIR, converts the 'date'
+    column to datetime format, and extracts data for all counties counties within the
     specified date range (START_DATE to END_DATE).
+
+    Imputes missing values then performs PCA and returns df with first two components.
 
     Returns:
         pandas.DataFrame: Columns include FIPS code, date, and mobility indicators.
     """
     DTYPE = {
-        "census_fips_code": "Int64",
+        "census_fips_code": "str",
         "date": "str",
     }
-    mobility_report_df = pd.read_csv(RAW_MOBILITY_REPORT_FILE, dtype=DTYPE)
-    mobility_report_df["date"] = pd.to_datetime(mobility_report_df["date"])
+    files = glob.glob(RAW_MOBILITY_REPORT_DIR + "/*.csv")
+    li = []
+    for file in files:
+        df = pd.read_csv(file, dtype=DTYPE)
+        df["date"] = pd.to_datetime(df["date"])
+        li.append(df)
 
-    counties = [
-        "Bronx County",
-        "Kings County",
-        "New York County",
-        "Queens County",
-        "Richmond County",
-    ]
+    mobility_report_df = pd.concat(li, axis=0, ignore_index=True)
+
     subset_cols = [
+        "sub_region_1",
+        "iso_3166_2_code",
         "census_fips_code",
         "date",
         "retail_and_recreation_percent_change_from_baseline",
         "grocery_and_pharmacy_percent_change_from_baseline",
-        "parks_percent_change_from_baseline",
+        # "parks_percent_change_from_baseline",  # not used in PCA
         "transit_stations_percent_change_from_baseline",
         "workplaces_percent_change_from_baseline",
         "residential_percent_change_from_baseline",
     ]
 
-    nyc_mobility_report_df = mobility_report_df.loc[
-        (mobility_report_df.sub_region_1 == "New York")
-        & (mobility_report_df.sub_region_2.isin(counties))
+    county_mobility_report_df = mobility_report_df.loc[
+        ~(mobility_report_df["census_fips_code"].isna())
         & (START_DATE <= mobility_report_df["date"])
         & (mobility_report_df["date"] <= END_DATE),
         subset_cols,
     ]
+    county_mobility_report_df.rename(columns={"census_fips_code": "FIPS"}, inplace=True)
 
-    nyc_mobility_report_df.rename(columns={"census_fips_code": "FIPS"}, inplace=True)
+    county_cbsa_map = get_county_cbsa_map()
+    county_mobility_report_df = county_mobility_report_df.merge(
+        county_cbsa_map, left_on="FIPS", right_on="COUNTY", how="left"
+    )
 
-    return nyc_mobility_report_df
+    # fill in NaN rows so each FIPS has a complete set of dates
+    all_dates = pd.date_range(
+        start=county_mobility_report_df["date"].min(),
+        end=county_mobility_report_df["date"].max(),
+    )
+    all_fips = county_mobility_report_df["FIPS"].unique()
+    all_combinations = pd.MultiIndex.from_product(
+        [all_fips, all_dates], names=["FIPS", "date"]
+    ).to_frame(index=False)
+    county_mobility_report_df = all_combinations.merge(
+        county_mobility_report_df, on=["FIPS", "date"], how="left"
+    )
+    county_mobility_report_df = county_mobility_report_df.sort_values(
+        by=["FIPS", "date"]
+    ).reset_index(drop=True)
+
+    # 7-day moving average
+    percent_change_columns = [
+        col for col in county_mobility_report_df.columns if "percent_change" in col
+    ]
+    # for col in percent_change_columns:
+    #     county_mobility_report_df[f"{col}_avg"] = (
+    #         county_mobility_report_df.groupby("FIPS")
+    #         .rolling(window=7, min_periods=1)[col]
+    #         .mean()
+    #         .reset_index(level=0, drop=True)
+    #     )
+
+    # Impute missing values using IterativeImputer
+    # avg_percent_change_columns = [f"{col}_avg" for col in percent_change_columns]
+    print("imputing using columns", percent_change_columns)
+    impute_df = county_mobility_report_df.drop(
+        columns=["sub_region_1", "iso_3166_2_code"]
+    ).loc[:, percent_change_columns]
+    df_copy = impute_df.copy()
+    missing_mask = df_copy.isna()
+
+    imputer = IterativeImputer(max_iter=100, random_state=1994)
+    imputed_values = imputer.fit_transform(df_copy)
+    imputed_df = pd.DataFrame(imputed_values, columns=df_copy.columns)
+
+    # PCA to account for correlation
+    df = imputed_df[percent_change_columns].dropna()
+
+    df_centered = df - df.mean()
+    assert np.all(np.abs(df_centered.mean()) < 1e-10)
+
+    pca = PCA()
+    pca.fit(df_centered)
+
+    perc_explained = pca.explained_variance_ratio_[0]
+    print(
+        f"Percent of variation explained with first component: {perc_explained * 100} %"
+    )
+    print(pca.explained_variance_ratio_)
+
+    # Force sign to be positive for workplace mobility
+    sgn_fix = -1 if pca.components_[0, 3] < 0 else 1
+
+    # Calculate the first principal component
+    pc1_train = sgn_fix * df_centered.values.dot(pca.components_[0])
+
+    # Calculate the second principal component
+    sgn_fix = -1 if pca.components_[1, 3] < 0 else 1
+    pc2_train = sgn_fix * df_centered.values.dot(pca.components_[1])
+
+    # Add the first and second principal component to the original DataFrame
+    df["mobility_pc1_full_dat"] = pc1_train
+    df["mobility_pc2_full_dat"] = pc2_train
+
+    # Ensure the absolute values match
+    assert np.all(
+        np.abs(np.abs(pc1_train) - np.abs(pca.transform(df_centered)[:, 0])) < 1e-10
+    )
+
+    county_mobility_report_df_pca = county_mobility_report_df.join(
+        df[["mobility_pc1_full_dat", "mobility_pc2_full_dat"]]
+    )
+
+    # temporal aggregation (just Mondays)
+    county_mobility_report_df_pca = county_mobility_report_df_pca[
+        county_mobility_report_df_pca["date"].dt.weekday == 0  #  Monday=0
+    ].reset_index(drop=True)
+
+    # spatial aggregation (county-weighted average)
+    county_mobility_report_df_pca = county_mobility_report_df_pca.loc[
+        county_mobility_report_df_pca["CBSA"] != 99999
+    ]
+    fields = [
+        "SUMLEV",
+        "REGION",
+        "DIVISION",
+        "STATE",
+        "COUNTY",
+        "STNAME",
+        "CTYNAME",
+        "POPESTIMATE2021",
+        "POPESTIMATE2022",
+    ]
+    converters = {
+        col: str
+        for col in [
+            "SUMLEV",
+            "REGION",
+            "DIVISION",
+            "STATE",
+            "COUNTY",
+            "STNAME",
+            "CTYNAME",
+        ]
+    }
+    print("Reading population data from", POP_URL)
+    pop_df = pd.read_csv(
+        POP_URL, usecols=fields, converters=converters, encoding="ISO-8859-1"
+    )
+    pop_df = pop_df.loc[pop_df["SUMLEV"] == "050"]
+    pop_df["FIPS"] = pop_df["STATE"] + pop_df["COUNTY"]
+
+    # fix connecticut
+    # https://developer.ap.org/ap-elections-api/docs/CT_FIPS_Codes_forPlanningRegions.htm
+    ct_fips_mapping = {
+        "09190": "09001",
+        "09110": "09003",
+        "09190": "09005",
+        "09130": "09007",
+        "09140": "09009",
+        "09180": "09011",
+        "09110": "09013",
+        "09150": "09015",
+        "09120": "09001",
+        "09160": "09005",
+        "09170": "09009",
+    }
+    pop_df = pop_df.replace({"FIPS": ct_fips_mapping})
+    pop_df = pop_df.groupby("FIPS")["POPESTIMATE2021"].sum().reset_index()
+
+    assert pop_df.FIPS.nunique() == pop_df.shape[0]
+
+    county_mobility_report_df_pca = county_mobility_report_df_pca.merge(
+        pop_df[["FIPS", "POPESTIMATE2021"]], on="FIPS", how="left"
+    )
+
+    # Group by date and CBSA, compute population-weighted average for PCA columns and percent change columns
+    pca_columns = ["mobility_pc1_full_dat", "mobility_pc2_full_dat"]
+    agg_columns = pca_columns + percent_change_columns
+
+    def weighted_avg(x):
+        weights = x["POPESTIMATE2021"]
+        return np.average(x[agg_columns], weights=weights, axis=0)
+
+    county_mobility_report_df_pca = (
+        county_mobility_report_df_pca.groupby(["date", "CBSA"])
+        .apply(lambda x: pd.Series(weighted_avg(x), index=agg_columns))
+        .reset_index()
+    )
+
+    return county_mobility_report_df_pca
 
 
 def process_safegraph_data(dates, node_dict, coo_df):
@@ -449,22 +628,10 @@ def process_safegraph_data(dates, node_dict, coo_df):
         Since the mobility data is only provided on a weekly basis, the function assigns
         edge weights to the next Monday for each date.
     """
-    mobility_files = glob.glob(f"{RAW_SAFEGRAPH_DIR}/*.csv")
-    mobility_dates = [os.path.basename(f).split("_")[0] for f in mobility_files]
-    mobility_dates = pd.to_datetime(mobility_dates)
-    mobility_dates = mobility_dates.sort_values()
-
-    day_mobility_dict = dict()
-
-    for d in dates:
-        next_sunday = d + pd.offsets.Week(n=0, weekday=0)
-        day_key = d.strftime("%Y-%m-%d")
-        day_mobility_dict[day_key] = next_sunday.strftime("%Y-%m-%d") + "_mobility.csv"
+    mobility_df = pd.read_csv(RAW_SAFEGRAPH_FILE)
 
     node_keys = list(node_dict.keys())
-
     edge_weights = []
-
     for row in tqdm(coo_df.iterrows()):
         orig = row[1][0]
         dest = row[1][1]
@@ -472,20 +639,25 @@ def process_safegraph_data(dates, node_dict, coo_df):
         orig_key = node_keys[orig]
         dest_key = node_keys[dest]
 
-        orig_fips, orig_date = orig_key.split("-", maxsplit=1)
-        dest_fips, dest_date = dest_key.split("-", maxsplit=1)
+        orig_cbsa, orig_date = orig_key.split("-", maxsplit=1)
+        dest_cbsa, dest_date = dest_key.split("-", maxsplit=1)
 
         if orig_date != dest_date:
             # temportal edge with no edge weight
             edge_weights.append(1)
         else:
-            df = pd.read_csv(RAW_SAFEGRAPH_DIR + day_mobility_dict[orig_date])
-            ew = df.loc[
-                (df.origin == BOROUGH_FULL_FIPS_DICT[int(orig_fips)])
-                & (df.destination == BOROUGH_FULL_FIPS_DICT[int(dest_fips)]),
+            ew = mobility_df.loc[
+                (mobility_df["date_range_start"] == orig_date)
+                & (mobility_df["cbsa_orig"] == orig_cbsa)
+                & (mobility_df["cbsa_dest"] == dest_cbsa),
                 "visitor_home_aggregation",
             ].values[0]
-            edge_weights.append(ew)
+            if ew:
+                edge_weights.append(ew)
+            else:
+                print(
+                    f"No edge weight for {orig_date}, orig:{cbsa_orig}, dest:{cbsa_dest}"
+                )
 
     return edge_weights
 
@@ -634,7 +806,7 @@ def process_case_death_zipcode():
 
 def process_case_death_data():
     """
-    Processes case and death data for New York City boroughs.
+    Processes case and death data for US CBSAs.
 
     Reads raw case and death data from RAW_CASE_URL and RAW_DEATH_URL, converts the
     'date_of_interest' column to datetime format, and extracts relevant subsets of data
@@ -642,9 +814,9 @@ def process_case_death_data():
 
     Returns:
         tuple: A tuple containing two DataFrames:
-            - death_subset_df: A DataFrame of processed death data, including FIPS code,
+            - death_subset_df: A DataFrame of processed death data, including CBSA code,
               date, death counts, 7-day average death counts, and delta death counts.
-            - case_subset_df: A DataFrame of processed case data, including FIPS code,
+            - case_subset_df: A DataFrame of processed case data, including CBSA code,
               date, case counts, 7-day average case counts, and delta case counts.
 
     Note:
@@ -652,32 +824,27 @@ def process_case_death_data():
         next day's 7-day average.
         It also computes previous case counts for each day within the time window.
     """
-    death_df = pd.read_csv(RAW_DEATH_URL)
-    case_df = pd.read_csv(RAW_CASE_URL)
+    death_df = pd.read_csv(RAW_DEATH_URL, dtype={"UID": str})
+    # case_df = pd.read_csv(RAW_CASE_URL, dtype={"UID": str})
 
-    # fill in FIPS code for using the last 5 digits of the UID code
-    death_df["FIPS"] = death_df["FIPS"].fillna(
-        death_df["UID"].astype(str).str[-5:].astype(int)
-    )
-    case_df["FIPS"] = case_df["FIPS"].fillna(
-        case_df["UID"].astype(str).str[-5:].astype(int)
-    )
+    # # fill in FIPS code for using the last 5 digits of the UID code
+    death_df["FIPS"] = death_df["UID"].astype(str).str[-5:]
+    # case_df["FIPS"] = case_df["UID"].astype(str).str[-5:]
 
-    death_df["FIPS"] = death_df["FIPS"].astype(int)
-    case_df["FIPS"] = case_df["FIPS"].astype(int)
-
+    # # melt from wide to long
     death_df = pd.melt(
         death_df,
         id_vars=death_df.columns[:12],
         var_name="date",
         value_name="DEATH_COUNT",
     )
-    case_df = pd.melt(
-        case_df, id_vars=case_df.columns[:11], var_name="date", value_name="CASE_COUNT"
-    )
+    # case_df = pd.melt(
+    #     case_df, id_vars=case_df.columns[:11], var_name="date", value_name="CASE_COUNT"
+    # )
 
+    # # filter between START_DATE and END_DATE
     death_df["date"] = pd.to_datetime(death_df["date"], format="%m/%d/%y")
-    case_df["date"] = pd.to_datetime(case_df["date"], format="%m/%d/%y")
+    # case_df["date"] = pd.to_datetime(case_df["date"], format="%m/%d/%y")
 
     death_df = death_df.loc[
         (
@@ -686,6 +853,86 @@ def process_case_death_data():
         )
         & (death_df["date"] <= END_DATE)
     ]
+    # case_df = case_df.loc[
+    #     (
+    #         pd.to_datetime(START_DATE) - pd.Timedelta(days=TIME_WINDOW_SIZE + 1)
+    #         <= case_df["date"]
+    #     )
+    #     & (case_df["date"] <= END_DATE)
+    # ]
+
+    # # fix since the counts are reported as cummulative
+    death_df.sort_values(by=["FIPS", "date"], inplace=True)
+    # case_df.sort_values(by=["FIPS", "date"], inplace=True)
+
+    death_df["DEATH_COUNT"] = death_df.groupby("FIPS")["DEATH_COUNT"].diff().fillna(0)
+    # case_df["CASE_COUNT"] = case_df.groupby("FIPS")["CASE_COUNT"].diff().fillna(0)
+
+    # ## ADHOC FIXES
+    # def _apply_neg_ad_hoc_fixes(df, fixes):
+    #     """
+    #     Applies ad-hoc fixes with large negative values in case/ death counts.
+
+    #     Args:
+    #         df (pd.DataFrame): The DataFrame to apply the fixes to.
+    #         fixes (list of dict): A list of dictionaries, where each dictionary defines a fix.
+    #             Each dictionary should have the following keys:
+    #             - 'fips': The FIPS code (string).
+    #             - 'date_to_zero': The date where the CASE_COUNT should be set to 0 (string).
+    #             - 'date_to_add': The date where the negative value should be added (string).
+
+    #     Returns:
+    #         pd.DataFrame: The DataFrame with the ad-hoc fixes applied.
+    #     """
+
+    #     for fix in fixes:
+    #         fips = fix["fips"]
+    #         date_to_zero = fix["date_to_zero"]
+    #         date_to_add = fix["date_to_add"]
+
+    #         try:
+    #             neg_val = df.loc[
+    #                 (df["FIPS"] == fips) & (df["date"] == date_to_zero),
+    #                 "CASE_COUNT",
+    #             ].values[0]
+    #             df.loc[
+    #                 (df["FIPS"] == fips) & (df["date"] == date_to_zero),
+    #                 "CASE_COUNT",
+    #             ] = 0
+    #             df.loc[
+    #                 (df["FIPS"] == fips) & (df["date"] == date_to_add),
+    #                 "CASE_COUNT",
+    #             ] += neg_val
+    #         except IndexError:
+    #             print(
+    #                 f"Warning: FIPS {fips}, date {date_to_zero} or {date_to_add} not found. Skipping fix."
+    #             )
+
+    #     return df
+
+    # case_fixes = [
+    #     {"fips": "12099", "date_to_zero": "2022-08-17", "date_to_add": "2022-08-13"},
+    #     {"fips": "48061", "date_to_zero": "2021-08-22", "date_to_add": "2021-08-21"},
+    #     {"fips": "06029", "date_to_zero": "2023-01-12", "date_to_add": "2023-01-13"},
+    #     {"fips": "06077", "date_to_zero": "2020-12-23", "date_to_add": "2020-12-24"},
+    #     {"fips": "01073", "date_to_zero": "2022-01-26", "date_to_add": "2022-01-25"},
+    #     {"fips": "31055", "date_to_zero": "2022-05-11", "date_to_add": "2022-02-28"},
+    #     {"fips": "34041", "date_to_zero": "2022-07-18", "date_to_add": "2022-07-19"},
+    # ]
+    # case_df = _apply_neg_ad_hoc_fixes(case_df, case_fixes)
+
+    ##################################################################################
+    ## READ in Teresa's data created from compiledata.m
+    ## TODO: replace this with the ad-hoc fixes coded here
+    ##################################################################################
+    case_df = pd.read_csv("../data/processed/teresa_case_df.csv", dtype={"FIPS": str})
+    case_df["FIPS"] = case_df["FIPS"].str.replace("'", "")
+    case_df = pd.melt(
+        case_df, id_vars=case_df.columns[:5], var_name="date", value_name="CASE_COUNT"
+    )
+    case_df["date"] = case_df["date"].str.replace("'", "")
+    case_df.drop(columns=["fipsnum"], inplace=True)
+    case_df["date"] = pd.to_datetime(case_df["date"], format="%m/%d/%Y")
     case_df = case_df.loc[
         (
             pd.to_datetime(START_DATE) - pd.Timedelta(days=TIME_WINDOW_SIZE + 1)
@@ -693,28 +940,79 @@ def process_case_death_data():
         )
         & (case_df["date"] <= END_DATE)
     ]
+    ##################################################################################
+    ##################################################################################
+
+    # merge in CBSA info and group by
+    county_cbsa_map = get_county_cbsa_map()
+    case_df = case_df.merge(
+        county_cbsa_map, left_on="FIPS", right_on="COUNTY", how="inner"
+    )
+    death_df = death_df.merge(
+        county_cbsa_map, left_on="FIPS", right_on="COUNTY", how="inner"
+    )
+
+    case_df = case_df.groupby(["CBSA", "date"])["CASE_COUNT"].sum().reset_index()
+    death_df = death_df.groupby(["CBSA", "date"])["DEATH_COUNT"].sum().reset_index()
+
+    death_df = death_df.loc[death_df["CBSA"] != 99999]
+    case_df = case_df.loc[case_df["CBSA"] != 99999]
+
+    # group by week and aggregate
+    death_df["week"] = death_df["date"].dt.to_period("W").apply(lambda r: r.start_time)
+    case_df["week"] = case_df["date"].dt.to_period("W").apply(lambda r: r.start_time)
+
+    death_df = death_df.groupby(["CBSA", "week"], as_index=False).agg(
+        {"DEATH_COUNT": "sum"}
+    )
+    death_df = death_df.rename(columns={"week": "date"})
+
+    case_df = case_df.groupby(["CBSA", "week"], as_index=False).agg(
+        {"CASE_COUNT": "sum"}
+    )
+    case_df = case_df.rename(columns={"week": "date"})
 
     death_df["node_key"] = (
-        death_df["FIPS"].astype(str) + "-" + death_df["date"].astype("str")
+        death_df["CBSA"].astype(str) + "-" + death_df["date"].astype("str")
     )
     case_df["node_key"] = (
-        case_df["FIPS"].astype(str) + "-" + case_df["date"].astype("str")
+        case_df["CBSA"].astype(str) + "-" + case_df["date"].astype("str")
     )
 
-    # fix since the counts are reported as cummulative
-    death_df.sort_values(by=["FIPS", "date"], inplace=True)
-    case_df.sort_values(by=["FIPS", "date"], inplace=True)
+    # # fix since the counts are reported as cummulative
+    death_df.sort_values(by=["CBSA", "date"], inplace=True)
+    case_df.sort_values(by=["CBSA", "date"], inplace=True)
 
-    death_df["DEATH_COUNT"] = death_df.groupby("FIPS")["DEATH_COUNT"].diff().fillna(0)
-    case_df["CASE_COUNT"] = case_df.groupby("FIPS")["CASE_COUNT"].diff().fillna(0)
+    death_df["DEATH_COUNT"] = death_df.groupby("CBSA")["DEATH_COUNT"].diff().fillna(0)
+    case_df["CASE_COUNT"] = case_df.groupby("CBSA")["CASE_COUNT"].diff().fillna(0)
 
+    # clip at 0 since there are negative cases and deaths
+    print(
+        "rows with neg cases:",
+        sum(case_df["CASE_COUNT"] < 0),
+        "out of",
+        case_df.shape[0],
+    )
+    print(
+        "rows with neg deaths:",
+        sum(death_df["DEATH_COUNT"] < 0),
+        "out of",
+        death_df.shape[0],
+    )
+    case_df["CASE_COUNT"] = case_df["CASE_COUNT"].clip(lower=0)
+    death_df["DEATH_COUNT"] = death_df["DEATH_COUNT"].clip(lower=0)
+
+    lagged_case_cols = []
+    lagged_death_cols = []
     for dd in range(TIME_WINDOW_SIZE - 1):
-        case_df[f"CASE_COUNT_PREV_{dd}"] = (
-            case_df.groupby("FIPS")["CASE_COUNT"].shift(dd + 1).fillna(0)
+        lagged_case_col = case_df.groupby("CBSA")["CASE_COUNT"].shift(dd + 1).fillna(0)
+        lagged_case_cols.append(lagged_case_col.rename(f"CASE_COUNT_PREV_{dd}"))
+        lagged_death_col = (
+            death_df.groupby("CBSA")["DEATH_COUNT"].shift(dd + 1).fillna(0)
         )
-        death_df[f"DEATH_COUNT_PREV_{dd}"] = (
-            death_df.groupby("FIPS")["DEATH_COUNT"].shift(dd + 1).fillna(0)
-        )
+        lagged_death_cols.append(lagged_death_col.rename(f"DEATH_COUNT_PREV_{dd}"))
+    case_df = pd.concat([case_df] + lagged_case_cols, axis=1)
+    death_df = pd.concat([death_df] + lagged_death_cols, axis=1)
 
     # correct the 7 day average so that it's not rounding to integers
     case_df[f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"] = case_df[
@@ -725,17 +1023,17 @@ def process_case_death_data():
     ].mean(axis=1)
 
     # compute deltas
-    case_df = case_df.sort_values(by=["date", "FIPS"])
+    case_df = case_df.sort_values(by=["date", "CBSA"])
     case_df["CASE_DELTA"] = (
-        case_df.groupby(["FIPS"])[f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
+        case_df.groupby(["CBSA"])[f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
         .diff(-1)
         .fillna(0)
     )
     case_df["CASE_DELTA"] = case_df["CASE_DELTA"] * -1
 
-    death_df = death_df.sort_values(by=["date", "FIPS"])
+    death_df = death_df.sort_values(by=["date", "CBSA"])
     death_df["DEATH_DELTA"] = (
-        death_df.groupby(["FIPS"])[f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
+        death_df.groupby(["CBSA"])[f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
         .diff(-1)
         .fillna(0)
     )
@@ -743,8 +1041,7 @@ def process_case_death_data():
 
     death_subset_cols = [
         "date",
-        "FIPS",
-        "Province_State",
+        "CBSA",
         "node_key",
         "DEATH_DELTA",
         f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG",
@@ -758,8 +1055,7 @@ def process_case_death_data():
     ]
     case_subset_cols = [
         "date",
-        "FIPS",
-        "Province_State",
+        "CBSA",
         "node_key",
         "CASE_DELTA",
         f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG",
