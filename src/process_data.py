@@ -188,7 +188,7 @@ def create_torch_geometric_data(version, device="cpu", predict_delta=False):
     save_data(
         death_subset_df,
         case_subset_df,
-        nyc_mobility_report_df,
+        mobility_report_df,
         coo_df,
         edge_weights,
         train_mask,
@@ -207,7 +207,7 @@ def create_torch_geometric_data(version, device="cpu", predict_delta=False):
         death_subset_df, on=["date_of_interest", "FIPS", "node_key"]
     )
     x_t = x_t.merge(
-        nyc_mobility_report_df,
+        mobility_report_df,
         left_on=["date_of_interest", "FIPS"],
         right_on=["date", "FIPS"],
     )
@@ -340,7 +340,7 @@ def create_train_test_mask(node_dict, dates, fips_list):
     return train_mask, test_mask
 
 
-def create_edge_index(node_dict, dates, fips_list):
+def create_edge_index(node_dict, dates, cbsa_list):
     """
     Creates edge index DataFrame representing spatial and temporal edges.
     The function first creates spatial edges, connecting all boroughs to each other
@@ -351,7 +351,7 @@ def create_edge_index(node_dict, dates, fips_list):
     Args:
         node_dict (dict): A dictionary mapping node keys to to vertex indices.
         dates (list): A list of datetime objects representing dates.
-        fips_list (list): A list of FIPS codes for each borough.
+        cbsa_list (list): A list of CBSA codes for each borough.
 
     Returns:
         pandas.DataFrame: Each row of the DataFrame corresponds to an edge,
@@ -359,18 +359,35 @@ def create_edge_index(node_dict, dates, fips_list):
     """
     coo_list = []
 
-    # create spatial edges (all boroughs are connected to each other)
-    for d in tqdm(dates):
-        for u in fips_list:
-            for v in fips_list:
-                u_key = f"{u}-{d.strftime('%Y-%m-%d')}"
-                v_key = f"{v}-{d.strftime('%Y-%m-%d')}"
-                u_idx = node_dict[u_key]
-                v_idx = node_dict[v_key]
-                coo_list.append([u_idx, v_idx])
+    mobility_df = pd.read_csv(RAW_SAFEGRAPH_FILE)
+    mobility_df["date_range_start"] = pd.to_datetime(mobility_df["date_range_start"])
+    mobility_df = mobility_df.loc[
+        (mobility_df["date_range_start"] >= START_DATE)
+        & (mobility_df["date_range_start"] <= END_DATE)
+    ]
+    print("Creating spatial edges...")
+    for index, row in tqdm(
+        mobility_df.iterrows(), total=mobility_df.shape[0], desc="Spatial Edges"
+    ):
+        date_str = row["date_range_start"].strftime("%Y-%m-%d")
+        cbsa_orig = row["cbsa_orig"]
+        cbsa_dest = row["cbsa_dest"]
+
+        u_key = f"{cbsa_orig}-{date_str}"
+        v_key = f"{cbsa_dest}-{date_str}"
+
+        # Ensure nodes exist before adding an edge
+        if u_key in node_dict and v_key in node_dict:
+            u_idx = node_dict[u_key]
+            v_idx = node_dict[v_key]
+            coo_list.append([u_idx, v_idx])
+        else:
+            print(
+                f"Warning: Missing node key for spatial edge: {u_key} or {v_key}. Skipping."
+            )
     print(len(coo_list), "spatial edges")
 
-    # create temporal edges
+    print("Creating temporal edges...")
     temp_count = 0
     for base_day_idx in range(0, len(dates) - TIME_WINDOW_SIZE):
         base_day = dates[base_day_idx]
@@ -379,7 +396,7 @@ def create_edge_index(node_dict, dates, fips_list):
             future_str = future_day.strftime("%Y-%m-%d")
 
             # iterate over each county fips
-            for f in fips_list:
+            for f in cbsa_list:
 
                 # Need a link from base_day to future_day
                 u_key = f"{f}-{base_str}"
