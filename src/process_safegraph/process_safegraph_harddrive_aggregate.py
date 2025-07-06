@@ -1,10 +1,10 @@
 """
-This script processes SafeGraph data for the years 2020 and 2021. It reads in CSV files containing 
-ZIP to FIPS mappings and SafeGraph data, merges the data, aggregates it by date range and FIPS codes, 
+This script processes SafeGraph data for the years 2020 and 2021. It reads in CSV files containing
+ZIP to FIPS mappings and SafeGraph data, merges the data, aggregates it by date range and FIPS codes,
 and saves the aggregated data to CSV files.
 
 Functions:
-    process_year(path, fname): Processes SafeGraph data for a given year, merges it with ZIP to FIPS 
+    process_year(path, fname): Processes SafeGraph data for a given year, merges it with ZIP to FIPS
     mappings, aggregates it, and saves the result to a CSV file.
 """
 
@@ -13,10 +13,11 @@ import polars.selectors as cs
 import pandas as pd
 
 # safragraph data processed in batches using `process_safegraph_harddrive.py`
-path_2020 = f"/burg/apam/users/nhw2114/safegraph/processed/harddrive/2020/*.csv"
-path_2021 = f"/burg/apam/users/nhw2114/safegraph/processed/harddrive/2021/*.csv"
+path_2020 = f"/burg/apam/users/nhw2114/safegraph/processed/harddrive2/2020/batch*.csv"
+path_2021 = f"/burg/apam/users/nhw2114/safegraph/processed/harddrive2/2021/batch*.csv"
+path_2022 = f"/burg/apam/users/nhw2114/safegraph/processed/harddrive2/2022/batch*.csv"
 
-OUT_DIR = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/"
+OUT_DIR = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/"
 ZIP_CBSA_PATH = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/ZIP_CBSA_122024.csv"
 
 
@@ -60,25 +61,8 @@ def process_year(path, fname):
     """
     print(f"Reading in CSVs from {path}")
     df = pl.scan_csv(
-        path, schema_overrides={"zip_orig": pl.String, "zip_dest": pl.String}
+        path, schema_overrides={"cbsa_orig": pl.String, "cbsa_dest": pl.String}
     )
-
-    unique_zips = df.select(pl.col("zip_orig")).unique().collect().to_series().to_list()
-    missing_zips = [
-        zip_code
-        for zip_code in unique_zips
-        if zip_code not in zip_cbsa_map.collect().to_series().to_list()
-    ]
-    print(f"Missing ZIPs: {missing_zips}")
-
-    # merge cbsa codes
-    df = df.join(zip_cbsa_map, left_on="zip_orig", right_on="zip", how="inner").rename(
-        {"CBSA": "cbsa_orig"}
-    )
-    df = df.join(zip_cbsa_map, left_on="zip_dest", right_on="zip", how="inner").rename(
-        {"CBSA": "cbsa_dest"}
-    )
-    df = df.drop(["zip_orig", "zip_dest"])
 
     # parse datetimes and extract dates
     df = df.with_columns(
@@ -110,10 +94,43 @@ def process_year(path, fname):
     )
     df_group.sink_csv(f"{OUT_DIR}/{fname}.csv")
 
+    return df_group
+
+
+def process_all_years(df_list, fname):
+    df_combined = pl.concat(df_list)
+
+    df_combined.group_by(
+        ["date_range_start", "date_range_end", "cbsa_orig", "cbsa_dest"]
+    ).agg(
+        [
+            pl.sum("visitor_home_aggregation"),
+            pl.sum("VISITS_DAY_0"),
+            pl.sum("VISITS_DAY_1"),
+            pl.sum("VISITS_DAY_2"),
+            pl.sum("VISITS_DAY_3"),
+            pl.sum("VISITS_DAY_4"),
+            pl.sum("VISITS_DAY_5"),
+            pl.sum("VISITS_DAY_6"),
+        ]
+    )
+
+    df_combined.sink_csv(f"{OUT_DIR}/{fname}.csv")
+
+    return df_combined
+
 
 print("Processing 2020 data")
-process_year(path_2020, "2020_harddrive_us")
+df_2020 = process_year(path_2020, "2020_harddrive_us")
 
 print("Processing 2021 data")
-process_year(path_2021, "2021_harddrive_us")
+df_2021 = process_year(path_2021, "2021_harddrive_us")
+
+print("Processing 2022 data")
+df_2022 = process_year(path_2022, "2022_harddrive_us")
+
+print("Combining all years")
+df_combined = process_all_years([df_2020, df_2021, df_2022], "all_harddrive_us")
+
+
 print("Done")
