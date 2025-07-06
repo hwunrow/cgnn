@@ -1,6 +1,6 @@
 import pandas as pd
 import pickle
-from codebook import BOROUGH_FIPS_MAP
+from codebook import TITLE_CBSA_MAP
 from datetime import datetime
 import math
 
@@ -14,13 +14,8 @@ def get_date_range(start, end, day_of_week="MON"):
     return dates
 
 
-def get_fips_list():
-    fips_list = list(BOROUGH_FIPS_MAP.values())
-    return fips_list
-
-
 def get_cbsa_list():
-    cbsa_list = list(.values())
+    cbsa_list = list(TITLE_CBSA_MAP.keys())
     return cbsa_list
 
 
