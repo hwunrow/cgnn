@@ -171,3 +171,4 @@ data/processed/teresa_case_df.csv
 data/raw/2024_Gaz_cbsa_national.txt
 src/postal_codes_in_raw_sg_data.csv
 data/raw/TRACT_ZIP_122024.csv
+data/raw/mobility/
