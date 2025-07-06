@@ -94,6 +94,7 @@ def get_county_cbsa_map():
     county_cbsa_map = zip_county_map[["ZIP", "COUNTY"]].merge(
         zip_cbsa_map[["ZIP", "CBSA"]], on="ZIP", how="inner"
     )
+    county_cbsa_map = county_cbsa_map[["COUNTY", "CBSA"]]
     county_cbsa_map = county_cbsa_map.drop_duplicates()
 
     print("unique ZIPs in zip-cbsa map:", zip_cbsa_map["ZIP"].nunique())
@@ -128,12 +129,9 @@ def get_county_cbsa_map():
         county_cbsa_map["COUNTY"]
         .map(fix_map)
         .fillna(county_cbsa_map["CBSA"])
-        .astype(int)
+        .astype(int).astype(str)
     )
     county_cbsa_map = county_cbsa_map.drop_duplicates()
-
-    county_cbsa_map.index = county_cbsa_map.index + 1
-
     county_cbsa_map = county_cbsa_map.sort_index()
 
     assert county_cbsa_map["COUNTY"].nunique() == county_cbsa_map.shape[0]
