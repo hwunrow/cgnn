@@ -18,36 +18,6 @@ path_2021 = f"/burg/apam/users/nhw2114/safegraph/processed/harddrive2/2021/batch
 path_2022 = f"/burg/apam/users/nhw2114/safegraph/processed/harddrive2/2022/batch*.csv"
 
 OUT_DIR = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/"
-ZIP_CBSA_PATH = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/ZIP_CBSA_122024.csv"
-
-
-def get_zip_cbsa_map(path):
-    """
-    Returns a lazy DataFrame mapping ZIP codes to CBSA codes.
-
-    Since ZIP-CBSA is one to many, keep the CBSA with the largest RES_RATIO for each zip.
-
-    Args:
-        path (str): Path to the CSV file (currently hardcoded).
-
-    Returns:
-        polars.LazyFrame: Lazy DataFrame mapping ZIP codes to CBSA codes.
-    """
-    zip_cbsa_map = pl.read_csv(
-        path,
-        schema_overrides={"CBSA": pl.Int64},
-    )
-    zip_cbsa_map = zip_cbsa_map.sort(["ZIP", "RES_RATIO"], descending=[False, True])
-    zip_cbsa_map = zip_cbsa_map.unique(subset="ZIP", keep="first")
-    zip_cbsa_map = zip_cbsa_map.select(
-        [pl.col("ZIP").cast(pl.String).alias("zip"), pl.col("CBSA")]
-    )
-    zip_cbsa_map = zip_cbsa_map.lazy()
-
-    return zip_cbsa_map
-
-
-zip_cbsa_map = get_zip_cbsa_map(ZIP_CBSA_PATH)
 
 
 def process_year(path, fname):
@@ -98,6 +68,14 @@ def process_year(path, fname):
 
 
 def process_all_years(df_list, fname):
+    """
+    Processes SafeGraph data for a all years, merges it with ZIP to FIPS mappings, aggregates it by
+    date range and FIPS codes, and saves the result to a CSV file.
+
+    Args:
+        df_list (list): List of data frames to concat.
+        fname (str): The output file name (without extension) for the aggregated data.
+    """
     df_combined = pl.concat(df_list)
 
     df_combined.group_by(
@@ -113,6 +91,10 @@ def process_all_years(df_list, fname):
             pl.sum("VISITS_DAY_5"),
             pl.sum("VISITS_DAY_6"),
         ]
+    )
+    df_combined = df_combined.filter(
+        pl.col("cbsa_orig") != "99999",
+        pl.col("cbsa_dest") != "99999",
     )
 
     df_combined.sink_csv(f"{OUT_DIR}/{fname}.csv")
