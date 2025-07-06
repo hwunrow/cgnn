@@ -18,7 +18,6 @@ from torch_geometric.data import Data
 
 sys.path.append("../utils/")
 from utils import get_date_range, get_cbsa_list
-from codebook import TITLE_CBSA_MAP
 from process_xwalk import get_county_cbsa_map
 
 # TODO don't hardcode these values, make them a YAML file that is saved
@@ -26,97 +25,16 @@ START_DATE = "02/29/2020"
 END_DATE = "12/31/2022"
 TRAIN_SPLIT_IDX = 672
 TIME_WINDOW_SIZE = 7
+TEMPORAL_EDGE_WINDOW_SIZE = 1
+
+SAFEGRAPH_MOBILITY_CUTOFF = 500
 
 RAW_DEATH_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
 RAW_CASE_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
-RAW_DEATH_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/deathrate-by-modzcta.csv"
-RAW_CASE_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/caserate-by-modzcta.csv"
-RAW_TOTALS_MODZCTA_URL = "https://raw.githubusercontent.com/nychealth/coronavirus-data/9fd8f9ca85a4f0cd7671c4872063cb525eacc42f/totals/data-by-modzcta.csv"
 RAW_SAFEGRAPH_FILE = "../data/raw/mobility/all_harddrive_us.csv"
 RAW_MOBILITY_REPORT_DIR = "../data/raw/google_mobility_reports/"
 
 POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
-
-ZIP_CBSA_PATH = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/ZIP_CBSA_122024.csv"
-ZIP_COUNTY_PATH = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/ZIP_COUNTY_122024.csv"
-
-
-# def get_county_cbsa_map():
-#     """
-#     Creates a mapping between counties and Core-Based Statistical Areas (CBSAs).
-
-#     This function reads ZIP to CBSA and ZIP to county mapping data from CSV files,
-#     processes the data to ensure unique mappings, and resolves any conflicts where
-#     a county is mapped to multiple CBSAs by selecting the CBSA with the most ZIPs.
-#     The resulting mapping is returned as a DataFrame.
-
-#     Returns:
-#         pandas.DataFrame: A DataFrame with columns 'COUNTY' and 'CBSA', representing
-#         the unique mapping between counties and CBSAs.
-#     """
-#     DTYPE = {
-#         "ZIP": "str",
-#         "CBSA": "str",
-#     }
-#     zip_cbsa_map = pd.read_csv(ZIP_CBSA_PATH, dtype=DTYPE)
-#     zip_cbsa_map = zip_cbsa_map.sort_values(
-#         ["ZIP", "RES_RATIO"], ascending=[True, False]
-#     )
-#     zip_cbsa_map = zip_cbsa_map.drop_duplicates(subset="ZIP", keep="first")
-
-#     DTYPE = {
-#         "ZIP": "str",
-#         "COUNTY": "str",
-#     }
-#     zip_county_map = pd.read_csv(ZIP_COUNTY_PATH, dtype=DTYPE)
-#     zip_county_map = zip_county_map.sort_values(
-#         ["ZIP", "RES_RATIO"], ascending=[True, False]
-#     )
-#     zip_county_map = zip_county_map.drop_duplicates(subset="ZIP", keep="first")
-
-#     county_cbsa_map = zip_county_map[["ZIP", "COUNTY"]].merge(
-#         zip_cbsa_map[["ZIP", "CBSA"]], on="ZIP", how="inner"
-#     )
-#     county_cbsa_map = county_cbsa_map[["COUNTY", "CBSA"]].drop_duplicates()
-
-#     print("unique ZIPs in zip-cbsa map:", zip_cbsa_map.ZIP.nunique())
-#     print("unique ZIPs in zip-county map:", zip_county_map.ZIP.nunique())
-#     print(
-#         "num zips in cbsa but not county:",
-#         len(set(zip_cbsa_map.ZIP.unique()) - set(zip_county_map.ZIP.unique())),
-#     )
-#     print(
-#         "num zips in county but not cbsa:",
-#         len(set(zip_county_map.ZIP.unique()) - set(zip_cbsa_map.ZIP.unique())),
-#     )
-#     print(set(zip_county_map.ZIP.unique()) - set(zip_cbsa_map.ZIP.unique()))
-
-#     # fix mapping for counties that are mapped to multiple CBSAs
-#     counts = county_cbsa_map.COUNTY.value_counts()
-#     duplicate_counties = counts[counts > 1].index.tolist()
-#     fix_map = {}
-#     for county in duplicate_counties:
-#         # choose the CBSA that has the most ZIPs
-#         cbsa_count = (
-#             zip_cbsa_map.loc[
-#                 zip_cbsa_map.ZIP.isin(
-#                     zip_county_map.loc[zip_county_map.COUNTY == county, "ZIP"]
-#                 )
-#             ]
-#             .groupby("CBSA")["ZIP"]
-#             .count()
-#         )
-#         correct_cbsa_map = cbsa_count.idxmax()
-#         fix_map[county] = correct_cbsa_map
-
-#     county_cbsa_map["CBSA"] = (
-#         county_cbsa_map.COUNTY.map(fix_map).fillna(county_cbsa_map["CBSA"]).astype(int)
-#     )
-#     county_cbsa_map = county_cbsa_map.drop_duplicates()
-
-#     assert county_cbsa_map.COUNTY.nunique() == county_cbsa_map.shape[0]
-
-#     return county_cbsa_map
 
 
 def create_edge_indices(dates):
@@ -143,34 +61,6 @@ def create_edge_indices(dates):
     return edge_indices_list
 
 
-def create_features_targets(dates, node_dict):
-    """
-    Creates node-level features and targets as list of numpy arrays for each date.
-
-    Args:
-        dates (list of datetime): List of dates.
-        node_dict (dict): Dictionary mapping node keys to indices.
-
-    Returns:
-        tuple: (features (list of numpy.ndarray), targets (list of numpy.ndarray)).
-    """
-    x_t = pd.read_csv("../data/processed/gcn/x_t.csv")
-    y_t = pd.read_csv("../data/processed/gcn/y_t.csv")
-    features = []
-    targets = []
-    for d in dates:
-        feature_snapshot = np.zeros((5, 22))
-        targets_snapshot = np.zeros(5)
-        for idx in range(5):
-            key = str(NODE_IDX_FIPS_MAP[idx]) + "-" + d.strftime("%Y-%m-%d")
-            feature_snapshot[idx, :] = np.array(x_t.iloc[node_dict[key]])
-            targets_snapshot[idx] = y_t.iloc[node_dict[key]]
-        features.append(feature_snapshot)
-        targets.append(targets_snapshot)
-
-    return features, targets
-
-
 def create_torch_geometric_data(version, device="cpu", predict_delta=False):
     dates = get_date_range(START_DATE, END_DATE)
     cbsa_list = get_cbsa_list()
@@ -180,7 +70,6 @@ def create_torch_geometric_data(version, device="cpu", predict_delta=False):
     node_dict = create_node_key()
     mobility_report_df = process_mobility_report()
     print("creating coo_df")
-    # TODO: do not make it a complete graph (this is CRAZY)
     coo_df = create_edge_index(node_dict, dates, cbsa_list)
     print("processing safegraph data")
     edge_weights = process_safegraph_data(dates, node_dict, coo_df)
@@ -286,9 +175,9 @@ def create_node_key():
     """
     Creates a dictionary mapping node keys to vertex indices.
 
-    Each key is formatted as {FIPS}-{YYYY-MM-DD}. For example, "36061-2020-03-01"
+    Each key is formatted as {CBSA}-{YYYY-MM-DD}. For example, "36061-2020-03-01"
     is the key for node associated with Manhattan on March 1, 2020.
-    The index values are orded by date and then FIPS.
+    The index values are orded by date and then CBSA.
 
     Returns:
         dict: A dictionary mapping node keys to vertex indices.
@@ -340,6 +229,28 @@ def create_train_test_mask(node_dict, dates, fips_list):
     return train_mask, test_mask
 
 
+def get_safegraph_mobility_data():
+
+    mobility_df = pd.read_csv(
+        RAW_SAFEGRAPH_FILE, dtype={"cbsa_orig": str, "cbsa_dest": str}
+    )
+    mobility_df["date_range_start"] = pd.to_datetime(mobility_df["date_range_start"])
+    mobility_df = mobility_df.loc[
+        (mobility_df["date_range_start"] >= START_DATE)
+        & (mobility_df["date_range_start"] <= END_DATE)
+    ]
+    mobility_df = mobility_df.loc[
+        mobility_df["visitor_home_aggregation"] > SAFEGRAPH_MOBILITY_CUTOFF
+    ]
+    cbsa_list = get_cbsa_list()
+    mobility_df = mobility_df.loc[
+        (mobility_df["cbsa_orig"].isin(cbsa_list))
+        & (mobility_df["cbsa_dest"].isin(cbsa_list))
+    ]
+
+    return mobility_df
+
+
 def create_edge_index(node_dict, dates, cbsa_list):
     """
     Creates edge index DataFrame representing spatial and temporal edges.
@@ -359,12 +270,8 @@ def create_edge_index(node_dict, dates, cbsa_list):
     """
     coo_list = []
 
-    mobility_df = pd.read_csv(RAW_SAFEGRAPH_FILE)
-    mobility_df["date_range_start"] = pd.to_datetime(mobility_df["date_range_start"])
-    mobility_df = mobility_df.loc[
-        (mobility_df["date_range_start"] >= START_DATE)
-        & (mobility_df["date_range_start"] <= END_DATE)
-    ]
+    mobility_df = get_safegraph_mobility_data()
+
     print("Creating spatial edges...")
     for index, row in tqdm(
         mobility_df.iterrows(), total=mobility_df.shape[0], desc="Spatial Edges"
@@ -389,10 +296,12 @@ def create_edge_index(node_dict, dates, cbsa_list):
 
     print("Creating temporal edges...")
     temp_count = 0
-    for base_day_idx in range(0, len(dates) - TIME_WINDOW_SIZE):
+    for base_day_idx in range(0, len(dates) - TEMPORAL_EDGE_WINDOW_SIZE):
         base_day = dates[base_day_idx]
         base_str = base_day.strftime("%Y-%m-%d")
-        for future_day in dates[base_day_idx + 1 : base_day_idx + TIME_WINDOW_SIZE + 1]:
+        for future_day in dates[
+            base_day_idx + 1 : base_day_idx + TEMPORAL_EDGE_WINDOW_SIZE + 1
+        ]:
             future_str = future_day.strftime("%Y-%m-%d")
 
             # iterate over each county fips
@@ -645,180 +554,48 @@ def process_safegraph_data(dates, node_dict, coo_df):
         Since the mobility data is only provided on a weekly basis, the function assigns
         edge weights to the next Monday for each date.
     """
-    mobility_df = pd.read_csv(RAW_SAFEGRAPH_FILE)
+    mobility_df = get_safegraph_mobility_data()
 
+    # Create a lookup dictionary for fast access
+    mobility_df["date_str"] = mobility_df["date_range_start"].dt.strftime("%Y-%m-%d")
+    mobility_lookup = {}
+    for _, row in mobility_df.iterrows():
+        key = (row["date_str"], row["cbsa_orig"], row["cbsa_dest"])
+        mobility_lookup[key] = row["visitor_home_aggregation"]
+
+    # Create reverse lookup for node indices to keys
     node_keys = list(node_dict.keys())
+
+    coo_array = coo_df.values
+    orig_keys = [node_keys[idx] for idx in coo_array[:, 0]]
+    dest_keys = [node_keys[idx] for idx in coo_array[:, 1]]
+
+    # Split keys into components
+    orig_components = [key.split("-", maxsplit=1) for key in orig_keys]
+    dest_components = [key.split("-", maxsplit=1) for key in dest_keys]
+
     edge_weights = []
-    for row in tqdm(coo_df.iterrows()):
-        orig = row[1][0]
-        dest = row[1][1]
 
-        orig_key = node_keys[orig]
-        dest_key = node_keys[dest]
-
-        orig_cbsa, orig_date = orig_key.split("-", maxsplit=1)
-        dest_cbsa, dest_date = dest_key.split("-", maxsplit=1)
+    print("Processing edge weights...")
+    for i in tqdm(range(len(coo_array))):
+        orig_cbsa, orig_date = orig_components[i]
+        dest_cbsa, dest_date = dest_components[i]
 
         if orig_date != dest_date:
-            # temportal edge with no edge weight
+            # temporal edge with no edge weight
             edge_weights.append(1)
         else:
-            ew = mobility_df.loc[
-                (mobility_df["date_range_start"] == orig_date)
-                & (mobility_df["cbsa_orig"] == orig_cbsa)
-                & (mobility_df["cbsa_dest"] == dest_cbsa),
-                "visitor_home_aggregation",
-            ].values[0]
-            if ew:
+            lookup_key = (orig_date, orig_cbsa, dest_cbsa)
+            ew = mobility_lookup.get(lookup_key)
+
+            if ew is not None:
                 edge_weights.append(ew)
             else:
                 print(
-                    f"No edge weight for {orig_date}, orig:{cbsa_orig}, dest:{cbsa_dest}"
+                    f"No edge weight for {orig_date}, orig:{orig_cbsa}, dest:{dest_cbsa}"
                 )
 
     return edge_weights
-
-
-def process_case_death_zipcode():
-    death_df = pd.read_csv(RAW_DEATH_MODZCTA_URL)
-    case_df = pd.read_csv(RAW_CASE_MODZCTA_URL)
-    totals_df = pd.read_csv(RAW_TOTALS_MODZCTA_URL)
-
-    case_long_df = pd.wide_to_long(
-        case_df, stubnames="CASERATE", i="week_ending", j="MODIFIED_ZCTA", sep="_"
-    ).reset_index()
-    death_long_df = pd.wide_to_long(
-        death_df, stubnames="DEATHRATE", i="date", j="MODIFIED_ZCTA", sep="_"
-    ).reset_index()
-
-    # merge population to convert from rates to counts (round to closest integer)
-    case_long_df = case_long_df.merge(
-        totals_df[["MODIFIED_ZCTA", "BOROUGH_GROUP", "POP_DENOMINATOR"]], how="left"
-    )
-    death_long_df = death_long_df.merge(
-        totals_df[["MODIFIED_ZCTA", "BOROUGH_GROUP", "POP_DENOMINATOR"]], how="left"
-    )
-
-    case_long_df["CASECOUNT"] = (
-        case_long_df["CASERATE"] * case_long_df["POP_DENOMINATOR"] / 100_000
-    )
-    death_long_df["DEATHCOUNT"] = (
-        death_long_df["DEATHRATE"] * death_long_df["POP_DENOMINATOR"] / 100_000
-    )
-
-    case_long_df["CASECOUNT"] = case_long_df["CASECOUNT"].round(1).astype(int)
-    death_long_df["DEATHCOUNT"] = death_long_df["DEATHCOUNT"].round(1)
-
-    # convert to pd datetime
-    case_long_df["week_ending"] = pd.to_datetime(case_long_df["week_ending"])
-    death_long_df["date"] = pd.to_datetime(death_long_df["date"])
-
-    # get just borough counts
-    borough_case_df = (
-        case_long_df.groupby(["week_ending", "BOROUGH_GROUP"])[["CASECOUNT"]]
-        .sum()
-        .reset_index()
-    )
-    borough_death_df = (
-        death_long_df.groupby(["date", "BOROUGH_GROUP"])[["DEATHCOUNT"]]
-        .sum()
-        .reset_index()
-    )
-
-    borough_case_df.rename(columns={"CASECOUNT": "BOROUGH_CASECOUNT"}, inplace=True)
-    borough_death_df.rename(columns={"DEATHCOUNT": "BOROUGH_DEATHCOUNT"}, inplace=True)
-
-    # get just borough rates
-    borough_case_long_df = case_long_df[
-        [
-            "week_ending",
-            "CASERATE_BK",
-            "CASERATE_BX",
-            "CASERATE_CITY",
-            "CASERATE_MN",
-            "CASERATE_QN",
-            "CASERATE_SI",
-        ]
-    ].drop_duplicates()
-    borough_case_long_df = pd.wide_to_long(
-        borough_case_long_df,
-        stubnames="CASERATE",
-        sep="_",
-        i="week_ending",
-        j="BOROUGH_GROUP",
-        suffix="\\D+",
-    ).reset_index()
-
-    borough_death_long_df = death_long_df[
-        [
-            "date",
-            "DEATHRATE_Bronx",
-            "DEATHRATE_Brooklyn",
-            "DEATHRATE_Citywide",
-            "DEATHRATE_Manhattan",
-            "DEATHRATE_Queens",
-            "DEATHRATE_Staten_Island",
-        ]
-    ].drop_duplicates()
-    borough_death_long_df = pd.wide_to_long(
-        borough_death_long_df,
-        stubnames="DEATHRATE",
-        sep="_",
-        i="date",
-        j="BOROUGH_GROUP",
-        suffix="\\D+",
-    ).reset_index()
-
-    # rename boroughs to match names in borough_pop_df
-    borough_abbrev_map = {
-        "BK": "Bronx",
-        "BX": "Brooklyn",
-        "CITY": "CITY",
-        "MN": "Manhattan",
-        "QN": "Queens",
-        "SI": "Staten Island",
-    }
-    borough_case_long_df["BOROUGH_GROUP"] = borough_case_long_df["BOROUGH_GROUP"].map(
-        borough_abbrev_map
-    )
-
-    borough_death_long_df.loc[
-        borough_death_long_df["BOROUGH_GROUP"] == "Citywide", "BOROUGH_GROUP"
-    ] = "CITY"
-    borough_death_long_df.loc[
-        borough_death_long_df["BOROUGH_GROUP"] == "Staten_Island", "BOROUGH_GROUP"
-    ] = "Staten Island"
-
-    borough_case_long_df.rename(columns={"CASERATE": "BOROUGH_CASERATE"}, inplace=True)
-    borough_death_long_df.rename(
-        columns={"DEATHRATE": "BOROUGH_DEATHRATE"}, inplace=True
-    )
-
-    borough_case_df = borough_case_df.merge(borough_case_long_df, how="left")
-    borough_death_df = borough_death_df.merge(borough_death_long_df, how="left")
-
-    # create node key MZCTA-date
-    case_long_df["node_key"] = (
-        case_long_df["MODIFIED_ZCTA"].astype(str)
-        + "-"
-        + case_long_df["week_ending"].astype("str")
-    )
-
-    death_long_df["node_key"] = (
-        death_long_df["MODIFIED_ZCTA"].astype(str)
-        + "-"
-        + death_long_df["date"].astype("str")
-    )
-
-    nan_n = sum(death_long_df.DEATHCOUNT.isnull())
-    n = death_long_df.shape[0]
-    print(f"{nan_n} out of {n} ({(nan_n / n):2.2%}) of death rate data have nans")
-
-    # TODO: use borough or neighborhood-level death node features instead
-    death_long_df["DEATHCOUNT"] = death_long_df.DEATHCOUNT.fillna(0.0)
-    death_long_df["DEATHRATE"] = death_long_df.DEATHRATE.fillna(0.0)
-
-    return case_long_df, death_long_df
 
 
 def process_case_death_data():
