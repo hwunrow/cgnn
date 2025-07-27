@@ -10,7 +10,7 @@ import process_data
 import numpy as np
 
 
-NODE_FEATURES = 22
+NODE_FEATURES = 16
 OUT_DIM = 1
 
 
@@ -57,17 +57,17 @@ class GCN(nn.Module):
         self.MLP_pred = nn.Linear(64, OUT_DIM)
         self.dropout = dropout
 
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, edge_weight):
         h = self.MLP_embed(x)
         h = F.dropout(h, p=self.dropout, training=self.training)
         h0 = h
 
-        h = self.conv1(h, edge_index)
+        h = self.conv1(h, edge_index, edge_weight)
         h = F.dropout(h, p=self.dropout, training=self.training)
         h = h.relu()
         h = torch.cat((h, h0), dim=1)  # skip connection
 
-        h = self.conv2(h, edge_index)
+        h = self.conv2(h, edge_index, edge_weight)
         h = h.relu()
         h = F.dropout(h, p=self.dropout, training=self.training)
         h = torch.cat((h, h0), dim=1)  # skip connection
