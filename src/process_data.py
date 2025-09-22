@@ -22,8 +22,8 @@ from process_xwalk import get_county_cbsa_map
 
 # TODO don't hardcode these values, make them a YAML file that is saved
 START_DATE = "02/29/2020"
-END_DATE = "12/31/2022"
-TRAIN_SPLIT_IDX = 672
+END_DATE = "12/31/2020"
+TRAIN_SPLIT_IDX = 35
 TIME_WINDOW_SIZE = 7
 TEMPORAL_EDGE_WINDOW_SIZE = 1
 
@@ -93,13 +93,13 @@ def create_torch_geometric_data(version, device="cpu", predict_delta=False):
     edge_weight_tensor = torch.tensor(edge_weights, dtype=torch.float32)
 
     x_t = case_subset_df.merge(
-        death_subset_df, on=["date_of_interest", "FIPS", "node_key"]
+        death_subset_df, on=["date", "CBSA", "node_key"]
     )
-    x_t = x_t.merge(
-        mobility_report_df,
-        left_on=["date_of_interest", "FIPS"],
-        right_on=["date", "FIPS"],
-    )
+    # x_t = x_t.merge(
+    #     mobility_report_df,
+    #     left_on=["date", "CBSA"],
+    #     right_on=["date", "CBSA"],
+    # )
     x_t_cols = [
         "CASE_COUNT",
         "CASE_COUNT_7DAY_AVG",
@@ -117,8 +117,8 @@ def create_torch_geometric_data(version, device="cpu", predict_delta=False):
         "DEATH_COUNT_PREV_3",
         "DEATH_COUNT_PREV_4",
         "DEATH_COUNT_PREV_5",
-        "mobility_pc1_full_dat",
-        "mobility_pc2_full_dat",
+        # "mobility_pc1_full_dat",
+        # "mobility_pc2_full_dat",
     ]
     x_t[x_t_cols].to_csv(f"../data/processed/{version}/x_t.csv", index=False)
     x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
@@ -487,8 +487,11 @@ def process_mobility_report():
         ]
     }
     print("Reading population data from", POP_URL)
+    # pop_df = pd.read_csv(
+    #     POP_URL, usecols=fields, converters=converters, encoding="ISO-8859-1"
+    # )
     pop_df = pd.read_csv(
-        POP_URL, usecols=fields, converters=converters, encoding="ISO-8859-1"
+        "../data/raw/co-est2023-alldata.csv", usecols=fields, converters=converters, encoding="ISO-8859-1"
     )
     pop_df = pop_df.loc[pop_df["SUMLEV"] == "050"]
     pop_df["FIPS"] = pop_df["STATE"] + pop_df["COUNTY"]
@@ -530,6 +533,9 @@ def process_mobility_report():
         .apply(lambda x: pd.Series(weighted_avg(x), index=agg_columns))
         .reset_index()
     )
+
+    cbsa_list = get_cbsa_list()
+    county_mobility_report_df_pca = county_mobility_report_df_pca[county_mobility_report_df_pca['CBSA'].isin(cbsa_list)]
 
     return county_mobility_report_df_pca
 
@@ -603,7 +609,7 @@ def process_case_death_data():
     Processes case and death data for US CBSAs.
 
     Reads raw case and death data from RAW_CASE_URL and RAW_DEATH_URL, converts the
-    'date_of_interest' column to datetime format, and extracts relevant subsets of data
+    'date' column to datetime format, and extracts relevant subsets of data
     within the specified date range (START_DATE to END_DATE).
 
     Returns:
@@ -869,6 +875,10 @@ def process_case_death_data():
         (START_DATE <= case_df["date"]) & (case_df["date"] <= END_DATE),
         case_subset_cols,
     ]
+
+    cbsa_list = get_cbsa_list()
+    death_df = death_df[death_df['CBSA'].isin(cbsa_list)]
+    case_df = case_df[case_df['CBSA'].isin(cbsa_list)]
 
     death_df.reset_index(inplace=True, drop=True)
     case_df.reset_index(inplace=True, drop=True)
