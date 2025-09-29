@@ -20,9 +20,12 @@ sys.path.append("../utils/")
 from utils import get_date_range, get_cbsa_list
 from process_xwalk import get_county_cbsa_map
 
+from omegaconf import DictConfig, OmegaConf
+import hydra
+
 # TODO don't hardcode these values, make them a YAML file that is saved
 START_DATE = "02/29/2020"
-END_DATE = "12/31/2020"
+END_DATE = "12/31/2022"
 TRAIN_SPLIT_IDX = 35
 TIME_WINDOW_SIZE = 7
 TEMPORAL_EDGE_WINDOW_SIZE = 1
@@ -35,30 +38,6 @@ RAW_SAFEGRAPH_FILE = "../data/raw/mobility/all_harddrive_us.csv"
 RAW_MOBILITY_REPORT_DIR = "../data/raw/google_mobility_reports/"
 
 POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
-
-
-def create_edge_indices(dates):
-    """
-    Creates edge indices for a dynamic graph given a list of dates.
-
-    Args:
-        dates (list of datetime): List of dates.
-
-    Returns:
-        list of numpy.ndarray: List of edge indices arrays for each snapshot.
-    """
-    num_nodes = 5
-    nodes = np.arange(num_nodes)
-    edges_upper = np.tile(nodes, (num_nodes, 1))
-    edges_lower = np.transpose(edges_upper)
-    edge_indices = np.concatenate(
-        (edges_upper.reshape(1, -1), edges_lower.reshape(1, -1)), axis=0
-    )
-    edge_indices %= num_nodes
-
-    edge_indices_list = [edge_indices for _ in range(len(dates))]
-
-    return edge_indices_list
 
 
 def create_torch_geometric_data(version, device="cpu", predict_delta=False):
@@ -92,9 +71,7 @@ def create_torch_geometric_data(version, device="cpu", predict_delta=False):
 
     edge_weight_tensor = torch.tensor(edge_weights, dtype=torch.float32)
 
-    x_t = case_subset_df.merge(
-        death_subset_df, on=["date", "CBSA", "node_key"]
-    )
+    x_t = case_subset_df.merge(death_subset_df, on=["date", "CBSA", "node_key"])
     # x_t = x_t.merge(
     #     mobility_report_df,
     #     left_on=["date", "CBSA"],
@@ -491,7 +468,10 @@ def process_mobility_report():
     #     POP_URL, usecols=fields, converters=converters, encoding="ISO-8859-1"
     # )
     pop_df = pd.read_csv(
-        "../data/raw/co-est2023-alldata.csv", usecols=fields, converters=converters, encoding="ISO-8859-1"
+        "../data/raw/co-est2023-alldata.csv",
+        usecols=fields,
+        converters=converters,
+        encoding="ISO-8859-1",
     )
     pop_df = pop_df.loc[pop_df["SUMLEV"] == "050"]
     pop_df["FIPS"] = pop_df["STATE"] + pop_df["COUNTY"]
@@ -535,7 +515,9 @@ def process_mobility_report():
     )
 
     cbsa_list = get_cbsa_list()
-    county_mobility_report_df_pca = county_mobility_report_df_pca[county_mobility_report_df_pca['CBSA'].isin(cbsa_list)]
+    county_mobility_report_df_pca = county_mobility_report_df_pca[
+        county_mobility_report_df_pca["CBSA"].isin(cbsa_list)
+    ]
 
     return county_mobility_report_df_pca
 
@@ -877,8 +859,8 @@ def process_case_death_data():
     ]
 
     cbsa_list = get_cbsa_list()
-    death_df = death_df[death_df['CBSA'].isin(cbsa_list)]
-    case_df = case_df[case_df['CBSA'].isin(cbsa_list)]
+    death_df = death_df[death_df["CBSA"].isin(cbsa_list)]
+    case_df = case_df[case_df["CBSA"].isin(cbsa_list)]
 
     death_df.reset_index(inplace=True, drop=True)
     case_df.reset_index(inplace=True, drop=True)
