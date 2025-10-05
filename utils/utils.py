@@ -1,6 +1,6 @@
 import pandas as pd
 import pickle
-from codebook import TITLE_CBSA_MAP
+from codebook import TITLE_CBSA_MAP, HHS_REGION_MAP
 from datetime import datetime
 import math
 
@@ -14,9 +14,33 @@ def get_date_range(start, end, day_of_week="MON"):
     return dates
 
 
-def get_cbsa_list():
-    cbsa_list = list(TITLE_CBSA_MAP.keys())
-    return cbsa_list
+def get_cbsa_list(hhs_region=None):
+    all_cbsas = list(TITLE_CBSA_MAP.keys())
+    if hhs_region is None:
+        return all_cbsas
+
+    df = pd.read_csv("../data/raw/list1_2023.csv")
+    df = df.iloc[:-3]  # Remove footer rows
+
+    cbsa_states = df.groupby("CBSA Code")["State Name"].apply(set).to_dict()
+
+    cbsa_to_region = {}
+    for cbsa, states in cbsa_states.items():
+        regions = set()
+        for state in states:
+            if state in HHS_REGION_MAP:
+                regions.add(HHS_REGION_MAP[state])
+        if regions:
+            # If CBSA spans multiple regions, take the first one
+            cbsa_to_region[cbsa] = next(iter(regions))
+
+    filtered_cbsas = [
+        cbsa
+        for cbsa, region in cbsa_to_region.items()
+        if cbsa in TITLE_CBSA_MAP and region == hhs_region
+    ]
+
+    return filtered_cbsas
 
 
 def get_node_date(version, idx):

@@ -40,18 +40,21 @@ RAW_MOBILITY_REPORT_DIR = "../data/raw/google_mobility_reports/"
 POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
 
 
-def create_torch_geometric_data(version, device="cpu", predict_delta=False):
+def create_torch_geometric_data(
+    version, device="cpu", predict_delta=False, cbsa_list=None
+):
     dates = get_date_range(START_DATE, END_DATE)
-    cbsa_list = get_cbsa_list()
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
 
     # process data
-    death_subset_df, case_subset_df = process_case_death_data()
-    node_dict = create_node_key()
-    mobility_report_df = process_mobility_report()
+    death_subset_df, case_subset_df = process_case_death_data(cbsa_list)
+    node_dict = create_node_key(cbsa_list)
+    mobility_report_df = process_mobility_report(cbsa_list)
     print("creating coo_df")
     coo_df = create_edge_index(node_dict, dates, cbsa_list)
     print("processing safegraph data")
-    edge_weights = process_safegraph_data(dates, node_dict, coo_df)
+    edge_weights = process_safegraph_data(dates, node_dict, coo_df, cbsa_list)
     train_mask, test_mask = create_train_test_mask(node_dict, dates, cbsa_list)
     save_data(
         death_subset_df,
@@ -148,7 +151,7 @@ def save_data(
     print("Processed data saved to", path)
 
 
-def create_node_key():
+def create_node_key(cbsa_list=None):
     """
     Creates a dictionary mapping node keys to vertex indices.
 
@@ -160,7 +163,8 @@ def create_node_key():
         dict: A dictionary mapping node keys to vertex indices.
     """
     dates = get_date_range(START_DATE, END_DATE)
-    cbsa_list = get_cbsa_list()
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
 
     node_dict = dict()
 
@@ -206,7 +210,9 @@ def create_train_test_mask(node_dict, dates, fips_list):
     return train_mask, test_mask
 
 
-def get_safegraph_mobility_data():
+def get_safegraph_mobility_data(cbsa_list=None):
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
 
     mobility_df = pd.read_csv(
         RAW_SAFEGRAPH_FILE, dtype={"cbsa_orig": str, "cbsa_dest": str}
@@ -219,7 +225,6 @@ def get_safegraph_mobility_data():
     mobility_df = mobility_df.loc[
         mobility_df["visitor_home_aggregation"] > SAFEGRAPH_MOBILITY_CUTOFF
     ]
-    cbsa_list = get_cbsa_list()
     mobility_df = mobility_df.loc[
         (mobility_df["cbsa_orig"].isin(cbsa_list))
         & (mobility_df["cbsa_dest"].isin(cbsa_list))
@@ -247,7 +252,7 @@ def create_edge_index(node_dict, dates, cbsa_list):
     """
     coo_list = []
 
-    mobility_df = get_safegraph_mobility_data()
+    mobility_df = get_safegraph_mobility_data(cbsa_list)
 
     print("Creating spatial edges...")
     for index, row in tqdm(
@@ -300,7 +305,7 @@ def create_edge_index(node_dict, dates, cbsa_list):
     return coo_df
 
 
-def process_mobility_report():
+def process_mobility_report(cbsa_list=None):
     """
     Processes Google Community Mobility Reports data for all counties.
 
@@ -514,7 +519,8 @@ def process_mobility_report():
         .reset_index()
     )
 
-    cbsa_list = get_cbsa_list()
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
     county_mobility_report_df_pca = county_mobility_report_df_pca[
         county_mobility_report_df_pca["CBSA"].isin(cbsa_list)
     ]
@@ -522,7 +528,7 @@ def process_mobility_report():
     return county_mobility_report_df_pca
 
 
-def process_safegraph_data(dates, node_dict, coo_df):
+def process_safegraph_data(dates, node_dict, coo_df, cbsa_list=None):
     """
     Processes SafeGraph mobility data to extract edge weights for temporal edges.
 
@@ -542,7 +548,7 @@ def process_safegraph_data(dates, node_dict, coo_df):
         Since the mobility data is only provided on a weekly basis, the function assigns
         edge weights to the next Monday for each date.
     """
-    mobility_df = get_safegraph_mobility_data()
+    mobility_df = get_safegraph_mobility_data(cbsa_list)
 
     # Create a lookup dictionary for fast access
     mobility_df["date_str"] = mobility_df["date_range_start"].dt.strftime("%Y-%m-%d")
@@ -586,7 +592,7 @@ def process_safegraph_data(dates, node_dict, coo_df):
     return edge_weights
 
 
-def process_case_death_data():
+def process_case_death_data(cbsa_list=None):
     """
     Processes case and death data for US CBSAs.
 
@@ -858,7 +864,8 @@ def process_case_death_data():
         case_subset_cols,
     ]
 
-    cbsa_list = get_cbsa_list()
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
     death_df = death_df[death_df["CBSA"].isin(cbsa_list)]
     case_df = case_df[case_df["CBSA"].isin(cbsa_list)]
 
