@@ -16,9 +16,8 @@ from torch_geometric.data import Data
 
 # from torch_geometric_temporal.signal import DynamicGraphTemporalSignal
 
-sys.path.append("../utils/")
-from utils import get_date_range, get_cbsa_list
-from process_xwalk import get_county_cbsa_map
+from cgnn.utils import get_date_range, get_cbsa_list
+from cgnn.process_xwalk import get_county_cbsa_map
 
 from omegaconf import DictConfig, OmegaConf
 import hydra
@@ -41,7 +40,7 @@ POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/co
 
 
 def create_torch_geometric_data(
-    version, device="cpu", predict_delta=False, cbsa_list=None
+    version, device="cpu", predict_delta=False, cbsa_list=None, include_temporal_edges=True
 ):
     dates = get_date_range(START_DATE, END_DATE)
     if cbsa_list is None:
@@ -52,7 +51,7 @@ def create_torch_geometric_data(
     node_dict = create_node_key(cbsa_list)
     mobility_report_df = process_mobility_report(cbsa_list)
     print("creating coo_df")
-    coo_df = create_edge_index(node_dict, dates, cbsa_list)
+    coo_df = create_edge_index(node_dict, dates, cbsa_list, include_temporal_edges)
     print("processing safegraph data")
     edge_weights = process_safegraph_data(dates, node_dict, coo_df, cbsa_list)
     train_mask, test_mask = create_train_test_mask(node_dict, dates, cbsa_list)
@@ -103,9 +102,9 @@ def create_torch_geometric_data(
     x_t[x_t_cols].to_csv(f"../data/processed/{version}/x_t.csv", index=False)
     x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
     if predict_delta:
-        y_t = case_subset_df["CASE_DELTA"]
+        y_t = case_subset_df.groupby("CBSA")["CASE_DELTA"].shift(-1).fillna(0)
     else:
-        y_t = case_subset_df["CASE_DELTA"] + case_subset_df["CASE_COUNT_7DAY_AVG"]
+        y_t = case_subset_df.groupby("CBSA")["CASE_COUNT_7DAY_AVG"].shift(-1).fillna(0)
     y_t.to_csv(f"../data/processed/{version}/y_t.csv", index=False)
     y_t = torch.tensor(
         y_t.values,
@@ -233,7 +232,7 @@ def get_safegraph_mobility_data(cbsa_list=None):
     return mobility_df
 
 
-def create_edge_index(node_dict, dates, cbsa_list):
+def create_edge_index(node_dict, dates, cbsa_list, include_temporal_edges = True):
     """
     Creates edge index DataFrame representing spatial and temporal edges.
     The function first creates spatial edges, connecting all boroughs to each other
@@ -276,30 +275,31 @@ def create_edge_index(node_dict, dates, cbsa_list):
             )
     print(len(coo_list), "spatial edges")
 
-    print("Creating temporal edges...")
-    temp_count = 0
-    for base_day_idx in range(0, len(dates) - TEMPORAL_EDGE_WINDOW_SIZE):
-        base_day = dates[base_day_idx]
-        base_str = base_day.strftime("%Y-%m-%d")
-        for future_day in dates[
-            base_day_idx + 1 : base_day_idx + TEMPORAL_EDGE_WINDOW_SIZE + 1
-        ]:
-            future_str = future_day.strftime("%Y-%m-%d")
-
-            # iterate over each county fips
-            for f in cbsa_list:
-
-                # Need a link from base_day to future_day
-                u_key = f"{f}-{base_str}"
-                v_key = f"{f}-{future_str}"
-
-                u_idx = node_dict[u_key]
-                v_idx = node_dict[v_key]
-                # Only add past->future link.
-                coo_list.append([u_idx, v_idx])
-                temp_count += 1
-
-    print(temp_count, "temporal edges")
+    if include_temporal_edges:
+        print("Creating temporal edges...")
+        temp_count = 0
+        for base_day_idx in range(0, len(dates) - TEMPORAL_EDGE_WINDOW_SIZE):
+            base_day = dates[base_day_idx]
+            base_str = base_day.strftime("%Y-%m-%d")
+            for future_day in dates[
+                base_day_idx + 1 : base_day_idx + TEMPORAL_EDGE_WINDOW_SIZE + 1
+            ]:
+                future_str = future_day.strftime("%Y-%m-%d")
+    
+                # iterate over each county fips
+                for f in cbsa_list:
+    
+                    # Need a link from base_day to future_day
+                    u_key = f"{f}-{base_str}"
+                    v_key = f"{f}-{future_str}"
+    
+                    u_idx = node_dict[u_key]
+                    v_idx = node_dict[v_key]
+                    # Only add past->future link.
+                    coo_list.append([u_idx, v_idx])
+                    temp_count += 1
+    
+        print(temp_count, "temporal edges")
     coo_df = pd.DataFrame(coo_list)
 
     return coo_df
@@ -814,18 +814,18 @@ def process_case_death_data(cbsa_list=None):
     case_df = case_df.sort_values(by=["date", "CBSA"])
     case_df["CASE_DELTA"] = (
         case_df.groupby(["CBSA"])[f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
-        .diff(-1)
+        .diff(1)
         .fillna(0)
     )
-    case_df["CASE_DELTA"] = case_df["CASE_DELTA"] * -1
+    # case_df["CASE_DELTA"] = case_df["CASE_DELTA"] * -1
 
     death_df = death_df.sort_values(by=["date", "CBSA"])
     death_df["DEATH_DELTA"] = (
         death_df.groupby(["CBSA"])[f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
-        .diff(-1)
+        .diff(1)
         .fillna(0)
     )
-    death_df["DEATH_DELTA"] = death_df["DEATH_DELTA"] * -1
+    # death_df["DEATH_DELTA"] = death_df["DEATH_DELTA"] * -1
 
     death_subset_cols = [
         "date",

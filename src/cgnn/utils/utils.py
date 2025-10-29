@@ -1,6 +1,6 @@
 import pandas as pd
 import pickle
-from codebook import TITLE_CBSA_MAP, HHS_REGION_MAP
+from cgnn.utils.codebook import TITLE_CBSA_MAP, HHS_REGION_MAP
 from datetime import datetime
 import math
 
