@@ -1,8 +1,16 @@
 import pandas as pd
+import os
 
-ZIP_CBSA_PATH = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/ZIP_CBSA_122024.csv"
-ZIP_COUNTY_PATH = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/ZIP_COUNTY_122024.csv"
-TRACT_ZIP_PATH = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/TRACT_ZIP_122024.csv"
+
+# Select paths depending on environment (cluster vs local)
+if os.path.exists("/burg/apam/users/nhw2114/repos/cgnn"):
+    _RAW_BASE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw"
+else:
+    _RAW_BASE = "/Users/hwunrow/Documents/GitHub/cgnn/data/raw"
+
+ZIP_CBSA_PATH = os.path.join(_RAW_BASE, "ZIP_CBSA_122024.csv")
+ZIP_COUNTY_PATH = os.path.join(_RAW_BASE, "ZIP_COUNTY_122024.csv")
+TRACT_ZIP_PATH = os.path.join(_RAW_BASE, "TRACT_ZIP_122024.csv")
 
 
 def get_zip_cbsa_map():
@@ -129,7 +137,8 @@ def get_county_cbsa_map():
         county_cbsa_map["COUNTY"]
         .map(fix_map)
         .fillna(county_cbsa_map["CBSA"])
-        .astype(int).astype(str)
+        .astype(int)
+        .astype(str)
     )
     county_cbsa_map = county_cbsa_map.drop_duplicates()
     county_cbsa_map = county_cbsa_map.sort_index()
