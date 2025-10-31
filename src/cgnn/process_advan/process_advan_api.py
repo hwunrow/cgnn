@@ -8,6 +8,8 @@ import sys
 import os
 import csv
 
+from cgnn.process_xwalk import get_zip_cbsa_map
+
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Process a batch of files.")
 parser.add_argument(
@@ -73,6 +75,8 @@ tract_zip_map = pd.read_csv(
     "/Users/hwunrow/Documents/GitHub/cgnn/data/raw/ZIP_TRACT_032020.csv",
     dtype={"ZIP": str, "TRACT": str},
 )
+
+zip_cbsa_map = get_zip_cbsa_map()
 
 # Ensure the batch index is within range
 if batch_index >= len(batch_list):
@@ -194,10 +198,28 @@ def process_batch_optimized(i):
     sum_df.drop(["tract", "TRACT"], axis=1, inplace=True)
     sum_df.rename(columns={"postal_code": "zip_dest", "ZIP": "zip_orig"}, inplace=True)
 
+    print("merging CBSA info")
+    start_time = time.time()
+    sum_df = sum_df.merge(
+        zip_cbsa_map.rename(columns={"ZIP": "zip_orig", "CBSA": "cbsa_orig"}),
+        on="zip_orig",
+        how="left",
+    )
+    sum_df = sum_df.merge(
+        zip_cbsa_map.rename(columns={"ZIP": "zip_dest", "CBSA": "cbsa_dest"}),
+        on="zip_dest",
+        how="left",
+    )
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"pd.merge took {elapsed_time:.4f} seconds")
+
     print("pd.groupby")
     start_time = time.time()
     sum_df = (
-        sum_df.groupby(["date_range_start", "date_range_end", "zip_orig", "zip_dest"])
+        sum_df.groupby(
+            ["date_range_start", "date_range_end", "cbsa_orig", "cbsa_dest"]
+        )[["visitor_home_aggregation"]]
         .sum()
         .reset_index()
     )
