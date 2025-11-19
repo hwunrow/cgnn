@@ -6,11 +6,12 @@ from torch_geometric.nn import GCNConv
 # from torch_geometric_temporal.nn.recurrent.attentiontemporalgcn import A3TGCN
 
 import pandas as pd
-import process_data
+from cgnn import process_data
 import numpy as np
 
 
-NODE_FEATURES = 16
+NODE_FEATURES = 1
+TARGET_FEATURE_IDX = 0
 OUT_DIM = 1
 
 
@@ -73,7 +74,9 @@ class GCN(nn.Module):
         h = torch.cat((h, h0), dim=1)  # skip connection
 
         delta = self.MLP_pred(h)
-        h = delta + x[:, 1].unsqueeze(1)
+        # Handle both single-feature (hospitalization) and multi-feature (case/death) data
+        # For single feature, use x[:, 0]; for multi-feature, use x[:, 1] (7-day average)
+        h = delta + x[:, TARGET_FEATURE_IDX].unsqueeze(1)
         out = h.relu()
 
         return out
