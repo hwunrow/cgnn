@@ -175,3 +175,4 @@ data/raw/mobility/
 *.gif
 data/*
 plots/**/*.pdf
+models/*
