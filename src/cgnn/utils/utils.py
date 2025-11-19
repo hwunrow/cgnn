@@ -43,6 +43,13 @@ def get_cbsa_list(hhs_region=None):
     return filtered_cbsas
 
 
+def get_cbsa_info(cbsa_list):
+    df = pd.read_csv("../data/raw/list1_2023.csv")
+    df = df.iloc[:-3]  # Remove footer rows
+
+    return df.loc[df["CBSA Code"].isin(cbsa_list)]
+
+
 def get_node_date(version, idx):
     path = f"../data/processed/{version}/"
     with open(f"{path}/node_dict.pkl", "rb") as f:
