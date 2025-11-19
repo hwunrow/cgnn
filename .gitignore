@@ -174,3 +174,4 @@ data/raw/TRACT_ZIP_122024.csv
 data/raw/mobility/
 *.gif
 data/*
+plots/**/*.pdf
