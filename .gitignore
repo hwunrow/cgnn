@@ -175,4 +175,5 @@ data/raw/mobility/
 *.gif
 data/*
 plots/**/*.pdf
+plots/eda/*.csv
 models/*
