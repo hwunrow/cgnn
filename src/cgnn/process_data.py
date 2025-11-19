@@ -23,42 +23,140 @@ from omegaconf import DictConfig, OmegaConf
 import hydra
 
 # TODO don't hardcode these values, make them a YAML file that is saved
-START_DATE = "02/29/2020"
-END_DATE = "12/31/2022"
-TRAIN_SPLIT_IDX = 35
+# START_DATE = "07/13/2020"
+# END_DATE = "04/22/2024"
+
+# START_DATE = "03/22/2020"
+# END_DATE = "12/31/2022"
+# TRAIN_SPLIT_IDX = 35
+
+# TESTING FUNCTION DATES
+START_DATE = "03/22/2020"
+END_DATE = "12/31/2020"
+TRAIN_SPLIT_IDX = 10
+
 TIME_WINDOW_SIZE = 7
 TEMPORAL_EDGE_WINDOW_SIZE = 1
 
-SAFEGRAPH_MOBILITY_CUTOFF = 500
+# SAFEGRAPH_MOBILITY_CUTOFF = 500
+SAFEGRAPH_MOBILITY_CUTOFF = 1000
 
 RAW_DEATH_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
 RAW_CASE_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
-RAW_SAFEGRAPH_FILE = "../data/raw/mobility/all_harddrive_us.csv"
+RAW_SAFEGRAPH_FILE = "../data/raw/mobility/safegraph/all_harddrive_us.csv"
 RAW_MOBILITY_REPORT_DIR = "../data/raw/google_mobility_reports/"
 
 POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
 
+RAW_HOSPITALZATION_FILE = "../data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
+HOSP_COL = "total_adult_patients_hospitalized_confirmed_covid_7_day_sum"
+RAW_ADVAN_FILE = "../data/raw/mobility/advan/all_advan_fix.csv"
+
+DATE_SOURCE = "hosp"
+
 
 def create_torch_geometric_data(
-    version, device="cpu", predict_delta=False, cbsa_list=None, include_temporal_edges=True
+    version,
+    device="cpu",
+    predict_delta=False,
+    cbsa_list=None,
+    include_temporal_edges=True,
+    data_source="hospital",
+    mobility_source="advan",
 ):
+    """
+    Creates a torch geometric Data object using configurable data and mobility sources.
+
+    Args:
+        version (str): Output version folder.
+        device (str): Device to move tensors to.
+        predict_delta (bool): Whether to predict case deltas (only for case data).
+        cbsa_list (list): Optional list of CBSAs to include.
+        include_temporal_edges (bool): Whether to add temporal edges.
+        data_source (str): "hospital" or "case".
+        mobility_source (str): "advan" or "safegraph".
+    """
+    data_source = data_source.lower()
+    mobility_source = mobility_source.lower()
+    if data_source not in {"hospital", "case"}:
+        raise ValueError(f"Unsupported data_source '{data_source}'")
+    if mobility_source not in {"advan", "safegraph"}:
+        raise ValueError(f"Unsupported mobility_source '{mobility_source}'")
+
     dates = get_date_range(START_DATE, END_DATE)
     if cbsa_list is None:
         cbsa_list = get_cbsa_list()
+    cbsa_set = set(cbsa_list)
 
-    # process data
-    death_subset_df, case_subset_df = process_case_death_data(cbsa_list)
+    hosp_df = None
+    death_subset_df = None
+    case_subset_df = None
+    nyc_mobility_report_df = None
+
+    if data_source == "hospital":
+        hosp_df = process_hospitalization_data(cbsa_list)
+        data_cbsa_set = set(hosp_df["CBSA"].unique())
+    else:
+        death_subset_df, case_subset_df = process_case_death_data(cbsa_list)
+        data_cbsa_set = set(case_subset_df["CBSA"].unique()).intersection(
+            set(death_subset_df["CBSA"].unique())
+        )
+        nyc_mobility_report_df = process_mobility_report(cbsa_list)
+
+    mobility_df = get_mobility_df_by_source(mobility_source, cbsa_list)
+    mobility_cbsa_set = set(mobility_df["cbsa_orig"].unique()).intersection(
+        set(mobility_df["cbsa_dest"].unique())
+    )
+
+    cbsa_set = cbsa_set.intersection(data_cbsa_set).intersection(mobility_cbsa_set)
+    if not cbsa_set:
+        raise ValueError(
+            "No overlapping CBSAs between requested data and mobility sources."
+        )
+    cbsa_list = sorted(cbsa_set)
+
+    if hosp_df is not None:
+        hosp_df = hosp_df.loc[hosp_df["CBSA"].isin(cbsa_list)]
+    if case_subset_df is not None:
+        case_subset_df = case_subset_df.loc[case_subset_df["CBSA"].isin(cbsa_list)]
+    if death_subset_df is not None:
+        death_subset_df = death_subset_df.loc[death_subset_df["CBSA"].isin(cbsa_list)]
+    if nyc_mobility_report_df is not None:
+        nyc_mobility_report_df = nyc_mobility_report_df.loc[
+            nyc_mobility_report_df["CBSA"].isin(cbsa_list)
+        ]
+    mobility_df = mobility_df.loc[
+        (mobility_df["cbsa_orig"].isin(cbsa_list))
+        & (mobility_df["cbsa_dest"].isin(cbsa_list))
+    ]
+
     node_dict = create_node_key(cbsa_list)
-    mobility_report_df = process_mobility_report(cbsa_list)
     print("creating coo_df")
-    coo_df = create_edge_index(node_dict, dates, cbsa_list, include_temporal_edges)
-    print("processing safegraph data")
-    edge_weights = process_safegraph_data(dates, node_dict, coo_df, cbsa_list)
+    coo_df = create_edge_index(
+        node_dict,
+        dates,
+        cbsa_list,
+        include_temporal_edges,
+        mobility_source=mobility_source,
+        mobility_df=mobility_df,
+    )
+
+    if mobility_source == "advan":
+        print("processing advan data")
+        edge_weights = process_advan_data(
+            dates, node_dict, coo_df, cbsa_list, mobility_df=mobility_df
+        )
+    else:
+        print("processing safegraph data")
+        edge_weights = process_safegraph_data(
+            dates, node_dict, coo_df, cbsa_list, mobility_df=mobility_df
+        )
+
     train_mask, test_mask = create_train_test_mask(node_dict, dates, cbsa_list)
     save_data(
         death_subset_df,
-        case_subset_df,
-        mobility_report_df,
+        case_subset_df if data_source == "case" else hosp_df,
+        nyc_mobility_report_df,
         coo_df,
         edge_weights,
         train_mask,
@@ -73,38 +171,43 @@ def create_torch_geometric_data(
 
     edge_weight_tensor = torch.tensor(edge_weights, dtype=torch.float32)
 
-    x_t = case_subset_df.merge(death_subset_df, on=["date", "CBSA", "node_key"])
-    # x_t = x_t.merge(
-    #     mobility_report_df,
-    #     left_on=["date", "CBSA"],
-    #     right_on=["date", "CBSA"],
-    # )
-    x_t_cols = [
-        "CASE_COUNT",
-        "CASE_COUNT_7DAY_AVG",
-        "CASE_COUNT_PREV_0",
-        "CASE_COUNT_PREV_1",
-        "CASE_COUNT_PREV_2",
-        "CASE_COUNT_PREV_3",
-        "CASE_COUNT_PREV_4",
-        "CASE_COUNT_PREV_5",
-        "DEATH_COUNT",
-        "DEATH_COUNT_7DAY_AVG",
-        "DEATH_COUNT_PREV_0",
-        "DEATH_COUNT_PREV_1",
-        "DEATH_COUNT_PREV_2",
-        "DEATH_COUNT_PREV_3",
-        "DEATH_COUNT_PREV_4",
-        "DEATH_COUNT_PREV_5",
-        # "mobility_pc1_full_dat",
-        # "mobility_pc2_full_dat",
-    ]
+    if data_source == "hospital":
+        x_t = hosp_df
+        x_t_cols = [HOSP_COL]
+        if predict_delta:
+            raise ValueError("Predicting delta not supported for hospitalization data")
+        y_t = hosp_df.groupby("CBSA")[HOSP_COL].shift(-1).fillna(0)
+    else:
+        x_t = case_subset_df.merge(death_subset_df, on=["date", "CBSA", "node_key"])
+        x_t_cols = [
+            "CASE_COUNT",
+            "CASE_COUNT_7DAY_AVG",
+            "CASE_COUNT_PREV_0",
+            "CASE_COUNT_PREV_1",
+            "CASE_COUNT_PREV_2",
+            "CASE_COUNT_PREV_3",
+            "CASE_COUNT_PREV_4",
+            "CASE_COUNT_PREV_5",
+            "DEATH_COUNT",
+            "DEATH_COUNT_7DAY_AVG",
+            "DEATH_COUNT_PREV_0",
+            "DEATH_COUNT_PREV_1",
+            "DEATH_COUNT_PREV_2",
+            "DEATH_COUNT_PREV_3",
+            "DEATH_COUNT_PREV_4",
+            "DEATH_COUNT_PREV_5",
+        ]
+        if predict_delta:
+            y_t = case_subset_df.groupby("CBSA")["CASE_DELTA"].shift(-1).fillna(0)
+        else:
+            y_t = (
+                case_subset_df.groupby("CBSA")["CASE_COUNT_7DAY_AVG"]
+                .shift(-1)
+                .fillna(0)
+            )
+
     x_t[x_t_cols].to_csv(f"../data/processed/{version}/x_t.csv", index=False)
     x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
-    if predict_delta:
-        y_t = case_subset_df.groupby("CBSA")["CASE_DELTA"].shift(-1).fillna(0)
-    else:
-        y_t = case_subset_df.groupby("CBSA")["CASE_COUNT_7DAY_AVG"].shift(-1).fillna(0)
     y_t.to_csv(f"../data/processed/{version}/y_t.csv", index=False)
     y_t = torch.tensor(
         y_t.values,
@@ -137,9 +240,12 @@ def save_data(
     path = f"../data/processed/{version}/"
     os.makedirs(path, exist_ok=True)
 
-    death_subset_df.to_csv(f"{path}/death_data.csv", index=False)
-    case_subset_df.to_csv(f"{path}/case_data.csv", index=False)
-    nyc_mobility_report_df.to_csv(f"{path}/mobility_report_data.csv", index=False)
+    if death_subset_df is not None:
+        death_subset_df.to_csv(f"{path}/death_data.csv", index=False)
+    if case_subset_df is not None:
+        case_subset_df.to_csv(f"{path}/case_data.csv", index=False)
+    if nyc_mobility_report_df is not None:
+        nyc_mobility_report_df.to_csv(f"{path}/mobility_report_data.csv", index=False)
     coo_df.to_csv(f"{path}/coo_edge_index.csv", index=False)
     np.save(f"{path}/edge_weights.npy", edge_weights)
     np.save(f"{path}/train_mask.npy", train_mask)
@@ -209,6 +315,37 @@ def create_train_test_mask(node_dict, dates, fips_list):
     return train_mask, test_mask
 
 
+def get_advan_mobility_data(cbsa_list=None):
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
+
+    mobility_df = pd.read_csv(
+        RAW_ADVAN_FILE, dtype={"cbsa_orig": str, "cbsa_dest": str}
+    )
+    mobility_df["date_range_start"] = pd.to_datetime(mobility_df["date_range_start"])
+    mobility_df["date_range_end"] = pd.to_datetime(mobility_df["date_range_end"])
+    mobility_df = mobility_df.loc[
+        (mobility_df["date_range_start"] >= pd.to_datetime(START_DATE))
+        & (mobility_df["date_range_start"] <= pd.to_datetime(END_DATE))
+    ]
+    mobility_df = mobility_df.loc[
+        mobility_df["visitor_home_aggregation"] > SAFEGRAPH_MOBILITY_CUTOFF
+    ]
+    mobility_df = mobility_df.loc[
+        (mobility_df["cbsa_orig"].isin(cbsa_list))
+        & (mobility_df["cbsa_dest"].isin(cbsa_list))
+    ]
+
+    mobility_df["date_range_start"] = pd.to_datetime(
+        mobility_df["date_range_start"], utc=True
+    ).dt.strftime("%Y-%m-%d")
+    mobility_df["date_range_end"] = pd.to_datetime(
+        mobility_df["date_range_end"]
+    ).dt.strftime("%Y-%m-%d")
+
+    return mobility_df
+
+
 def get_safegraph_mobility_data(cbsa_list=None):
     if cbsa_list is None:
         cbsa_list = get_cbsa_list()
@@ -232,7 +369,22 @@ def get_safegraph_mobility_data(cbsa_list=None):
     return mobility_df
 
 
-def create_edge_index(node_dict, dates, cbsa_list, include_temporal_edges = True):
+def get_mobility_df_by_source(mobility_source, cbsa_list=None):
+    if mobility_source == "advan":
+        return get_advan_mobility_data(cbsa_list)
+    if mobility_source == "safegraph":
+        return get_safegraph_mobility_data(cbsa_list)
+    raise ValueError(f"Unsupported mobility_source '{mobility_source}'")
+
+
+def create_edge_index(
+    node_dict,
+    dates,
+    cbsa_list,
+    include_temporal_edges=True,
+    mobility_source="advan",
+    mobility_df=None,
+):
     """
     Creates edge index DataFrame representing spatial and temporal edges.
     The function first creates spatial edges, connecting all boroughs to each other
@@ -251,13 +403,14 @@ def create_edge_index(node_dict, dates, cbsa_list, include_temporal_edges = True
     """
     coo_list = []
 
-    mobility_df = get_safegraph_mobility_data(cbsa_list)
+    if mobility_df is None:
+        mobility_df = get_mobility_df_by_source(mobility_source, cbsa_list)
 
     print("Creating spatial edges...")
     for index, row in tqdm(
         mobility_df.iterrows(), total=mobility_df.shape[0], desc="Spatial Edges"
     ):
-        date_str = row["date_range_start"].strftime("%Y-%m-%d")
+        date_str = pd.to_datetime(row["date_range_start"]).strftime("%Y-%m-%d")
         cbsa_orig = row["cbsa_orig"]
         cbsa_dest = row["cbsa_dest"]
 
@@ -285,20 +438,26 @@ def create_edge_index(node_dict, dates, cbsa_list, include_temporal_edges = True
                 base_day_idx + 1 : base_day_idx + TEMPORAL_EDGE_WINDOW_SIZE + 1
             ]:
                 future_str = future_day.strftime("%Y-%m-%d")
-    
+
                 # iterate over each county fips
                 for f in cbsa_list:
-    
+
                     # Need a link from base_day to future_day
                     u_key = f"{f}-{base_str}"
                     v_key = f"{f}-{future_str}"
-    
-                    u_idx = node_dict[u_key]
-                    v_idx = node_dict[v_key]
-                    # Only add past->future link.
-                    coo_list.append([u_idx, v_idx])
-                    temp_count += 1
-    
+
+                    # Ensure nodes exist before adding an edge
+                    if u_key in node_dict and v_key in node_dict:
+                        u_idx = node_dict[u_key]
+                        v_idx = node_dict[v_key]
+                        # Only add past->future link.
+                        coo_list.append([u_idx, v_idx])
+                        temp_count += 1
+                    else:
+                        print(
+                            f"Warning: Missing node key for temporal edge: {u_key} or {v_key}. Skipping."
+                        )
+
         print(temp_count, "temporal edges")
     coo_df = pd.DataFrame(coo_list)
 
@@ -528,7 +687,73 @@ def process_mobility_report(cbsa_list=None):
     return county_mobility_report_df_pca
 
 
-def process_safegraph_data(dates, node_dict, coo_df, cbsa_list=None):
+def process_advan_data(dates, node_dict, coo_df, cbsa_list=None, mobility_df=None):
+    """
+    Processes Advan mobility data to extract edge weights for temporal edges.
+
+    Args:
+        dates (list): A list of datetime objects representing dates.
+        node_dict (dict): A dictionary mapping node keys to vertex indices.
+        coo_df (pandas.DataFrame): A DataFrame containing edge indices.
+
+    Returns:
+        list: A list containing edge weights for temporal edges.
+
+    Note:
+        The function reads Advan mobility data from CSV files in RAW_SAFEGRAPH_DIR.
+        It extracts edge weights based on visitor home aggregation for temporal edges,
+        with weights representing the number of visitors from the origin borough to the
+        destination borough.
+        Since the mobility data is only provided on a weekly basis, the function assigns
+        edge weights to the next Monday for each date.
+    """
+    if mobility_df is None:
+        mobility_df = get_advan_mobility_data(cbsa_list)
+
+    # Create a lookup dictionary for fast access
+    mobility_df["date_range_start"] = pd.to_datetime(mobility_df["date_range_start"])
+    mobility_df["date_str"] = mobility_df["date_range_start"].dt.strftime("%Y-%m-%d")
+    mobility_lookup = {}
+    for _, row in mobility_df.iterrows():
+        key = (row["date_str"], row["cbsa_orig"], row["cbsa_dest"])
+        mobility_lookup[key] = row["visitor_home_aggregation"]
+
+    # Create reverse lookup for node indices to keys
+    node_keys = list(node_dict.keys())
+
+    coo_array = coo_df.values
+    orig_keys = [node_keys[idx] for idx in coo_array[:, 0]]
+    dest_keys = [node_keys[idx] for idx in coo_array[:, 1]]
+
+    # Split keys into components
+    orig_components = [key.split("-", maxsplit=1) for key in orig_keys]
+    dest_components = [key.split("-", maxsplit=1) for key in dest_keys]
+
+    edge_weights = []
+
+    print("Processing edge weights...")
+    for i in tqdm(range(len(coo_array))):
+        orig_cbsa, orig_date = orig_components[i]
+        dest_cbsa, dest_date = dest_components[i]
+
+        if orig_date != dest_date:
+            # temporal edge with no edge weight
+            edge_weights.append(1)
+        else:
+            lookup_key = (orig_date, orig_cbsa, dest_cbsa)
+            ew = mobility_lookup.get(lookup_key)
+
+            if ew is not None:
+                edge_weights.append(ew)
+            else:
+                print(
+                    f"No edge weight for {orig_date}, orig:{orig_cbsa}, dest:{dest_cbsa}"
+                )
+
+    return edge_weights
+
+
+def process_safegraph_data(dates, node_dict, coo_df, cbsa_list=None, mobility_df=None):
     """
     Processes SafeGraph mobility data to extract edge weights for temporal edges.
 
@@ -548,7 +773,8 @@ def process_safegraph_data(dates, node_dict, coo_df, cbsa_list=None):
         Since the mobility data is only provided on a weekly basis, the function assigns
         edge weights to the next Monday for each date.
     """
-    mobility_df = get_safegraph_mobility_data(cbsa_list)
+    if mobility_df is None:
+        mobility_df = get_safegraph_mobility_data(cbsa_list)
 
     # Create a lookup dictionary for fast access
     mobility_df["date_str"] = mobility_df["date_range_start"].dt.strftime("%Y-%m-%d")
@@ -590,6 +816,117 @@ def process_safegraph_data(dates, node_dict, coo_df, cbsa_list=None):
                 )
 
     return edge_weights
+
+
+def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21):
+    """
+    Processes hospitalization data for US CBSAs.
+    """
+    hosp_df = pd.read_csv(RAW_HOSPITALZATION_FILE, dtype={"fips_code": str})
+
+    hosp_df["collection_week"] = pd.to_datetime(hosp_df["collection_week"])
+    # Shift dates forward by one day to align with advan data
+    hosp_df["collection_week"] = hosp_df["collection_week"] + pd.Timedelta(days=1)
+
+    # filter  between START_DATE and END_DATE
+    hosp_df = hosp_df.loc[
+        (hosp_df["collection_week"] >= START_DATE)
+        & (hosp_df["collection_week"] <= END_DATE)
+    ]
+
+    # cutoff by max missing weeks
+    dates = get_date_range(START_DATE, END_DATE)
+    total_weeks = len(dates)
+
+    # Calculate reporting statistics per hospital
+    hospital_reporting = (
+        hosp_df.groupby("hospital_pk")
+        .agg(
+            {
+                "collection_week": "nunique",
+                "state": "first",
+            }
+        )
+        .reset_index()
+    )
+    hospital_reporting.columns = ["hospital_pk", "unique_weeks", "state"]
+
+    # Calculate missing weeks
+    hospital_reporting["missing_weeks"] = (
+        total_weeks - hospital_reporting["unique_weeks"]
+    )
+    print(
+        f"number of hospitals with less than {max_missing_weeks=} missing weeks:",
+        len(
+            hospital_reporting.loc[
+                hospital_reporting["missing_weeks"] <= max_missing_weeks, "hospital_pk"
+            ]
+        ),
+    )
+
+    # filter out hospitals with more than MAX_MISSING_WEEKS missing weeks
+    hosp_df = hosp_df.merge(hospital_reporting, on="hospital_pk", how="left")
+    hosp_df = hosp_df.loc[hosp_df["missing_weeks"] <= max_missing_weeks]
+
+    # clean hospitalization column
+    hosp_df[HOSP_COL] = hosp_df[HOSP_COL].replace("-999,999", 0)
+    hosp_df[HOSP_COL] = hosp_df[HOSP_COL].replace(-999999, 0)
+
+    hosp_df[HOSP_COL] = pd.to_numeric(hosp_df[HOSP_COL], errors="coerce")
+
+    # manually fix fips codes that are not in the county_cbsa_map
+    manual_fips_fixes = {
+        "02080": "02063",
+        "02120": "02122",
+        "02210": "02122",
+        "02260": "02063",
+        "02280": "02195",
+        "09001": "09190",
+        "09003": "09110",
+        "09005": "09160",
+        "09007": "09130",
+        "09009": "09170",
+        "09011": "09180",
+        "09013": "09110",
+        "09015": "09150",
+        "51595": "51111",
+    }
+    hosp_df["fips_code"] = hosp_df["fips_code"].replace(manual_fips_fixes)
+    # merge in CBSA info and group by
+    county_cbsa_map = get_county_cbsa_map()
+    hosp_df = hosp_df.merge(
+        county_cbsa_map, left_on="fips_code", right_on="COUNTY", how="inner"
+    )
+
+    hosp_df = hosp_df.groupby(["CBSA", "collection_week"])[HOSP_COL].sum().reset_index()
+    hosp_df = hosp_df.loc[hosp_df["CBSA"] != "99999"]
+
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
+    hosp_df = hosp_df[hosp_df["CBSA"].isin(cbsa_list)]
+
+    # ensure all CBSAs have full date range and fill missing values with 0
+    dates = get_date_range(START_DATE, END_DATE)
+    multi_index = pd.MultiIndex.from_product(
+        [hosp_df["CBSA"].unique(), dates], names=["CBSA", "collection_week"]
+    )
+    # Set index and reindex to fill missing combinations with 0
+    hosp_df = (
+        hosp_df.set_index(["CBSA", "collection_week"])
+        .reindex(multi_index, fill_value=0)
+        .reset_index()
+    )
+
+    hosp_df.sort_values(by=["collection_week", "CBSA"], inplace=True)
+
+    # create node key
+    hosp_df["node_key"] = (
+        hosp_df["CBSA"].astype(str)
+        + "-"
+        + hosp_df["collection_week"].dt.strftime("%Y-%m-%d")
+    )
+
+    return hosp_df
 
 
 def process_case_death_data(cbsa_list=None):
