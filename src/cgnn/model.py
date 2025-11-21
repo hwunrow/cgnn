@@ -8,11 +8,20 @@ from torch_geometric.nn import GCNConv
 import pandas as pd
 from cgnn import process_data
 import numpy as np
+from omegaconf import DictConfig
+
+# Default values
+_DEFAULT_NODE_FEATURES = 1
+_DEFAULT_TARGET_FEATURE_IDX = 0
+_DEFAULT_OUT_DIM = 1
+_DEFAULT_DROPOUT = 0.5
 
 
-NODE_FEATURES = 1
-TARGET_FEATURE_IDX = 0
-OUT_DIM = 1
+def _get_config_value(cfg, key, default):
+    """Helper function to get config value or default."""
+    if cfg is None:
+        return default
+    return cfg.get(key, default)
 
 
 class RMSLELoss(torch.nn.Module):
@@ -29,34 +38,49 @@ class RMSLELoss(torch.nn.Module):
         return rmsle
 
 
-class AttentionGCN(torch.nn.Module):
-    def __init__(self, node_features, periods, dropout, out_channels=32):
-        super(AttentionGCN, self).__init__()
-        self.attention = A3TGCN(node_features, out_channels, periods=periods)
-        self.MLP_pred = nn.Linear(out_channels, 1)
-        self.periods = periods
-        self.dropout = dropout
-
-    def forward(self, x, edge_index, edge_weight):
-        h = self.attention(x, edge_index, edge_weight)
-        h = F.dropout(h, p=self.dropout, training=self.training)
-        h = h.relu()
-
-        delta = self.MLP_pred(h)
-        h = delta + x[:, 1, -1].unsqueeze(1)
-        out = h.relu()
-
-        return out
-
-
 class GCN(nn.Module):
-    def __init__(self, dropout=0.5):
+    def __init__(self, dropout=None, cfg=None):
         super().__init__()
-        self.MLP_embed = nn.Linear(NODE_FEATURES, 32)
-        self.conv1 = GCNConv(32, 32)
-        self.conv2 = GCNConv(64, 32)
-        self.MLP_pred = nn.Linear(64, OUT_DIM)
+        # Get values from config or parameters
+        if cfg is not None and hasattr(cfg, "model"):
+            model_cfg = cfg.model
+            node_features = _get_config_value(
+                model_cfg, "node_features", _DEFAULT_NODE_FEATURES
+            )
+            out_dim = _get_config_value(model_cfg, "out_dim", _DEFAULT_OUT_DIM)
+            if hasattr(model_cfg, "gcn"):
+                gcn_cfg = model_cfg.gcn
+                dropout = (
+                    dropout
+                    if dropout is not None
+                    else _get_config_value(gcn_cfg, "dropout", _DEFAULT_DROPOUT)
+                )
+                hidden_dim = _get_config_value(gcn_cfg, "hidden_dim", 32)
+            else:
+                dropout = (
+                    dropout
+                    if dropout is not None
+                    else _get_config_value(model_cfg, "dropout", _DEFAULT_DROPOUT)
+                )
+                hidden_dim = 32
+        else:
+            node_features = _DEFAULT_NODE_FEATURES
+            out_dim = _DEFAULT_OUT_DIM
+            dropout = dropout if dropout is not None else _DEFAULT_DROPOUT
+            hidden_dim = 32
+
+        self.MLP_embed = nn.Linear(node_features, hidden_dim)
+        self.conv1 = GCNConv(hidden_dim, hidden_dim)
+        self.conv2 = GCNConv(hidden_dim * 2, hidden_dim)
+        self.MLP_pred = nn.Linear(hidden_dim * 2, out_dim)
         self.dropout = dropout
+        # Get target_feature_idx from config
+        if cfg is not None and hasattr(cfg, "model"):
+            self.target_feature_idx = _get_config_value(
+                cfg.model, "target_feature_idx", _DEFAULT_TARGET_FEATURE_IDX
+            )
+        else:
+            self.target_feature_idx = _DEFAULT_TARGET_FEATURE_IDX
 
     def forward(self, x, edge_index, edge_weight):
         h = self.MLP_embed(x)
@@ -76,7 +100,7 @@ class GCN(nn.Module):
         delta = self.MLP_pred(h)
         # Handle both single-feature (hospitalization) and multi-feature (case/death) data
         # For single feature, use x[:, 0]; for multi-feature, use x[:, 1] (7-day average)
-        h = delta + x[:, TARGET_FEATURE_IDX].unsqueeze(1)
+        h = delta + x[:, self.target_feature_idx].unsqueeze(1)
         out = h.relu()
 
         return out

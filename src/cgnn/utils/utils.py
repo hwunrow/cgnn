@@ -3,6 +3,8 @@ import pickle
 from cgnn.utils.codebook import TITLE_CBSA_MAP, HHS_REGION_MAP
 from datetime import datetime
 import math
+import os
+from omegaconf import OmegaConf, DictConfig
 
 
 def get_date_range(start, end, day_of_week="MON"):
@@ -88,6 +90,24 @@ def get_node_pos(version, idx):
     pos_x += 2 * delta_days
 
     return (pos_x, pos_y)
+
+
+def save_config_to_directory(cfg, directory, filename="config.yaml"):
+    """
+    Save a Hydra config to a directory.
+    
+    Args:
+        cfg (DictConfig): The Hydra config object to save.
+        directory (str): The directory path where to save the config.
+        filename (str): The filename for the config file (default: "config.yaml").
+    
+    Returns:
+        str: The full path to the saved config file.
+    """
+    os.makedirs(directory, exist_ok=True)
+    config_path = os.path.join(directory, filename)
+    OmegaConf.save(cfg, config_path)
+    return config_path
 
 
 def get_node_idx(node_dict, fips, date):

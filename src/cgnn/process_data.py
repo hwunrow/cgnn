@@ -22,37 +22,30 @@ from cgnn.process_xwalk import get_county_cbsa_map
 from omegaconf import DictConfig, OmegaConf
 import hydra
 
-# TODO don't hardcode these values, make them a YAML file that is saved
-# START_DATE = "07/13/2020"
-# END_DATE = "04/22/2024"
+# Default values for backward compatibility (used when cfg is not provided)
+# These can be overridden via Hydra config
+_DEFAULT_START_DATE = "03/22/2020"
+_DEFAULT_END_DATE = "12/31/2020"
+_DEFAULT_TRAIN_SPLIT_IDX = 10
+_DEFAULT_TIME_WINDOW_SIZE = 7
+_DEFAULT_TEMPORAL_EDGE_WINDOW_SIZE = 1
+_DEFAULT_MOBILITY_CUTOFF = 1000
+_DEFAULT_RAW_DEATH_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
+_DEFAULT_RAW_CASE_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
+_DEFAULT_RAW_SAFEGRAPH_FILE = "../data/raw/mobility/safegraph/all_harddrive_us.csv"
+_DEFAULT_RAW_MOBILITY_REPORT_DIR = "../data/raw/google_mobility_reports/"
+_DEFAULT_POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
+_DEFAULT_RAW_HOSPITALZATION_FILE = "../data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
+_DEFAULT_HOSP_COL = "total_adult_patients_hospitalized_confirmed_covid_7_day_sum"
+_DEFAULT_RAW_ADVAN_FILE = "../data/raw/mobility/advan/all_advan_fix.csv"
+_DEFAULT_MAX_MISSING_WEEKS = 21
 
-# START_DATE = "03/22/2020"
-# END_DATE = "12/31/2022"
-# TRAIN_SPLIT_IDX = 35
 
-# TESTING FUNCTION DATES
-START_DATE = "03/22/2020"
-END_DATE = "12/31/2020"
-TRAIN_SPLIT_IDX = 10
-
-TIME_WINDOW_SIZE = 7
-TEMPORAL_EDGE_WINDOW_SIZE = 1
-
-# SAFEGRAPH_MOBILITY_CUTOFF = 500
-SAFEGRAPH_MOBILITY_CUTOFF = 1000
-
-RAW_DEATH_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
-RAW_CASE_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
-RAW_SAFEGRAPH_FILE = "../data/raw/mobility/safegraph/all_harddrive_us.csv"
-RAW_MOBILITY_REPORT_DIR = "../data/raw/google_mobility_reports/"
-
-POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
-
-RAW_HOSPITALZATION_FILE = "../data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
-HOSP_COL = "total_adult_patients_hospitalized_confirmed_covid_7_day_sum"
-RAW_ADVAN_FILE = "../data/raw/mobility/advan/all_advan_fix.csv"
-
-DATE_SOURCE = "hosp"
+def _get_config_value(cfg, key, default):
+    """Helper function to get config value or default."""
+    if cfg is None:
+        return default
+    return cfg.get(key, default)
 
 
 def create_torch_geometric_data(
@@ -63,6 +56,7 @@ def create_torch_geometric_data(
     include_temporal_edges=True,
     data_source="hospital",
     mobility_source="advan",
+    cfg=None,
 ):
     """
     Creates a torch geometric Data object using configurable data and mobility sources.
@@ -75,15 +69,29 @@ def create_torch_geometric_data(
         include_temporal_edges (bool): Whether to add temporal edges.
         data_source (str): "hospital" or "case".
         mobility_source (str): "advan" or "safegraph".
+        cfg (DictConfig, optional): Hydra config object. If None, uses default values.
     """
-    data_source = data_source.lower()
-    mobility_source = mobility_source.lower()
+    # Get config values or use defaults
+    if cfg is not None and hasattr(cfg, "data"):
+        data_cfg = cfg.data
+        start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
+        end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
+        data_source = _get_config_value(data_cfg, "data_source", data_source).lower()
+        mobility_source = _get_config_value(
+            data_cfg, "mobility_source", mobility_source
+        ).lower()
+    else:
+        start_date = _DEFAULT_START_DATE
+        end_date = _DEFAULT_END_DATE
+        data_source = data_source.lower()
+        mobility_source = mobility_source.lower()
+
     if data_source not in {"hospital", "case"}:
         raise ValueError(f"Unsupported data_source '{data_source}'")
     if mobility_source not in {"advan", "safegraph"}:
         raise ValueError(f"Unsupported mobility_source '{mobility_source}'")
 
-    dates = get_date_range(START_DATE, END_DATE)
+    dates = get_date_range(start_date, end_date)
     if cbsa_list is None:
         cbsa_list = get_cbsa_list()
     cbsa_set = set(cbsa_list)
@@ -94,16 +102,16 @@ def create_torch_geometric_data(
     nyc_mobility_report_df = None
 
     if data_source == "hospital":
-        hosp_df = process_hospitalization_data(cbsa_list)
+        hosp_df = process_hospitalization_data(cbsa_list, cfg=cfg)
         data_cbsa_set = set(hosp_df["CBSA"].unique())
     else:
-        death_subset_df, case_subset_df = process_case_death_data(cbsa_list)
+        death_subset_df, case_subset_df = process_case_death_data(cbsa_list, cfg=cfg)
         data_cbsa_set = set(case_subset_df["CBSA"].unique()).intersection(
             set(death_subset_df["CBSA"].unique())
         )
-        nyc_mobility_report_df = process_mobility_report(cbsa_list)
+        nyc_mobility_report_df = process_mobility_report(cbsa_list, cfg=cfg)
 
-    mobility_df = get_mobility_df_by_source(mobility_source, cbsa_list)
+    mobility_df = get_mobility_df_by_source(mobility_source, cbsa_list, cfg=cfg)
     mobility_cbsa_set = set(mobility_df["cbsa_orig"].unique()).intersection(
         set(mobility_df["cbsa_dest"].unique())
     )
@@ -130,7 +138,7 @@ def create_torch_geometric_data(
         & (mobility_df["cbsa_dest"].isin(cbsa_list))
     ]
 
-    node_dict = create_node_key(cbsa_list)
+    node_dict = create_node_key(cbsa_list, cfg=cfg)
     print("creating coo_df")
     coo_df = create_edge_index(
         node_dict,
@@ -139,6 +147,7 @@ def create_torch_geometric_data(
         include_temporal_edges,
         mobility_source=mobility_source,
         mobility_df=mobility_df,
+        cfg=cfg,
     )
 
     if mobility_source == "advan":
@@ -152,7 +161,7 @@ def create_torch_geometric_data(
             dates, node_dict, coo_df, cbsa_list, mobility_df=mobility_df
         )
 
-    train_mask, test_mask = create_train_test_mask(node_dict, dates, cbsa_list)
+    train_mask, test_mask = create_train_test_mask(node_dict, dates, cbsa_list, cfg=cfg)
     save_data(
         death_subset_df,
         case_subset_df if data_source == "case" else hosp_df,
@@ -163,6 +172,7 @@ def create_torch_geometric_data(
         test_mask,
         node_dict,
         version,
+        cfg=cfg,
     )
 
     # make everything a tensor
@@ -171,12 +181,18 @@ def create_torch_geometric_data(
 
     edge_weight_tensor = torch.tensor(edge_weights, dtype=torch.float32)
 
+    # Get HOSP_COL from config or default
+    if cfg is not None and hasattr(cfg, "data"):
+        hosp_col = _get_config_value(cfg.data, "hosp_col", _DEFAULT_HOSP_COL)
+    else:
+        hosp_col = _DEFAULT_HOSP_COL
+
     if data_source == "hospital":
         x_t = hosp_df
-        x_t_cols = [HOSP_COL]
+        x_t_cols = [hosp_col]
         if predict_delta:
             raise ValueError("Predicting delta not supported for hospitalization data")
-        y_t = hosp_df.groupby("CBSA")[HOSP_COL].shift(-1).fillna(0)
+        y_t = hosp_df.groupby("CBSA")[hosp_col].shift(-1).fillna(0)
     else:
         x_t = case_subset_df.merge(death_subset_df, on=["date", "CBSA", "node_key"])
         x_t_cols = [
@@ -236,6 +252,7 @@ def save_data(
     test_mask,
     node_dict,
     version,
+    cfg=None,
 ):
     path = f"../data/processed/{version}/"
     os.makedirs(path, exist_ok=True)
@@ -253,10 +270,16 @@ def save_data(
     with open(f"{path}/node_dict.pkl", "wb") as f:
         pickle.dump(node_dict, f)
 
+    # Save config copy for reproducibility
+    if cfg is not None:
+        config_path = f"{path}/config.yaml"
+        OmegaConf.save(cfg, config_path)
+        print(f"Config saved to {config_path}")
+
     print("Processed data saved to", path)
 
 
-def create_node_key(cbsa_list=None):
+def create_node_key(cbsa_list=None, cfg=None):
     """
     Creates a dictionary mapping node keys to vertex indices.
 
@@ -264,10 +287,20 @@ def create_node_key(cbsa_list=None):
     is the key for node associated with Manhattan on March 1, 2020.
     The index values are orded by date and then CBSA.
 
+    Args:
+        cbsa_list (list, optional): List of CBSA codes.
+        cfg (DictConfig, optional): Hydra config object.
+
     Returns:
         dict: A dictionary mapping node keys to vertex indices.
     """
-    dates = get_date_range(START_DATE, END_DATE)
+    if cfg is not None and hasattr(cfg, "data"):
+        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
+        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
+    else:
+        start_date = _DEFAULT_START_DATE
+        end_date = _DEFAULT_END_DATE
+    dates = get_date_range(start_date, end_date)
     if cbsa_list is None:
         cbsa_list = get_cbsa_list()
 
@@ -283,7 +316,7 @@ def create_node_key(cbsa_list=None):
     return node_dict
 
 
-def create_train_test_mask(node_dict, dates, fips_list):
+def create_train_test_mask(node_dict, dates, fips_list, cfg=None):
     """
     Creates train and test masks.
     Train mask includes data up to the TRAIN_SPLIT_IDX'th date.
@@ -292,12 +325,20 @@ def create_train_test_mask(node_dict, dates, fips_list):
         node_dict (dict): A dictionary mapping node keys to vertex indices.
         dates (list): A list of datetime objects representing dates.
         fips_list (list): A list of FIPS codes for each borough.
+        cfg (DictConfig, optional): Hydra config object.
 
     Returns:
         tuple: A tuple containing two lists, of the train mask and the test mask.
             Each list has the same length as the number of nodes,
             with 1s indicating inclusion, and 0s indicating exclusion.
     """
+    if cfg is not None and hasattr(cfg, "data"):
+        train_split_idx = _get_config_value(
+            cfg.data, "train_split_idx", _DEFAULT_TRAIN_SPLIT_IDX
+        )
+    else:
+        train_split_idx = _DEFAULT_TRAIN_SPLIT_IDX
+
     train_mask = [0 for _ in range(len(node_dict))]
     test_mask = [0 for _ in range(len(node_dict))]
 
@@ -307,7 +348,7 @@ def create_train_test_mask(node_dict, dates, fips_list):
             key_str = "{}-{}".format(fips, date_str)
 
             idx = node_dict[key_str]
-            if i < TRAIN_SPLIT_IDX:
+            if i < train_split_idx:
                 train_mask[idx] = 1
             else:
                 test_mask[idx] = 1
@@ -315,21 +356,37 @@ def create_train_test_mask(node_dict, dates, fips_list):
     return train_mask, test_mask
 
 
-def get_advan_mobility_data(cbsa_list=None):
+def get_advan_mobility_data(cbsa_list=None, cfg=None):
     if cbsa_list is None:
         cbsa_list = get_cbsa_list()
 
+    # Get config values or defaults
+    if cfg is not None and hasattr(cfg, "data"):
+        raw_advan_file = _get_config_value(
+            cfg.data, "raw_advan_file", _DEFAULT_RAW_ADVAN_FILE
+        )
+        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
+        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
+        mobility_cutoff = _get_config_value(
+            cfg.data, "mobility_cutoff", _DEFAULT_MOBILITY_CUTOFF
+        )
+    else:
+        raw_advan_file = _DEFAULT_RAW_ADVAN_FILE
+        start_date = _DEFAULT_START_DATE
+        end_date = _DEFAULT_END_DATE
+        mobility_cutoff = _DEFAULT_MOBILITY_CUTOFF
+
     mobility_df = pd.read_csv(
-        RAW_ADVAN_FILE, dtype={"cbsa_orig": str, "cbsa_dest": str}
+        raw_advan_file, dtype={"cbsa_orig": str, "cbsa_dest": str}
     )
     mobility_df["date_range_start"] = pd.to_datetime(mobility_df["date_range_start"])
     mobility_df["date_range_end"] = pd.to_datetime(mobility_df["date_range_end"])
     mobility_df = mobility_df.loc[
-        (mobility_df["date_range_start"] >= pd.to_datetime(START_DATE))
-        & (mobility_df["date_range_start"] <= pd.to_datetime(END_DATE))
+        (mobility_df["date_range_start"] >= pd.to_datetime(start_date))
+        & (mobility_df["date_range_start"] <= pd.to_datetime(end_date))
     ]
     mobility_df = mobility_df.loc[
-        mobility_df["visitor_home_aggregation"] > SAFEGRAPH_MOBILITY_CUTOFF
+        mobility_df["visitor_home_aggregation"] > mobility_cutoff
     ]
     mobility_df = mobility_df.loc[
         (mobility_df["cbsa_orig"].isin(cbsa_list))
@@ -346,20 +403,36 @@ def get_advan_mobility_data(cbsa_list=None):
     return mobility_df
 
 
-def get_safegraph_mobility_data(cbsa_list=None):
+def get_safegraph_mobility_data(cbsa_list=None, cfg=None):
     if cbsa_list is None:
         cbsa_list = get_cbsa_list()
 
+    # Get config values or defaults
+    if cfg is not None and hasattr(cfg, "data"):
+        raw_safegraph_file = _get_config_value(
+            cfg.data, "raw_safegraph_file", _DEFAULT_RAW_SAFEGRAPH_FILE
+        )
+        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
+        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
+        safegraph_mobility_cutoff = _get_config_value(
+            cfg.data, "mobility_cutoff", _DEFAULT_MOBILITY_CUTOFF
+        )
+    else:
+        raw_safegraph_file = _DEFAULT_RAW_SAFEGRAPH_FILE
+        start_date = _DEFAULT_START_DATE
+        end_date = _DEFAULT_END_DATE
+        safegraph_mobility_cutoff = _DEFAULT_MOBILITY_CUTOFF
+
     mobility_df = pd.read_csv(
-        RAW_SAFEGRAPH_FILE, dtype={"cbsa_orig": str, "cbsa_dest": str}
+        raw_safegraph_file, dtype={"cbsa_orig": str, "cbsa_dest": str}
     )
     mobility_df["date_range_start"] = pd.to_datetime(mobility_df["date_range_start"])
     mobility_df = mobility_df.loc[
-        (mobility_df["date_range_start"] >= START_DATE)
-        & (mobility_df["date_range_start"] <= END_DATE)
+        (mobility_df["date_range_start"] >= start_date)
+        & (mobility_df["date_range_start"] <= end_date)
     ]
     mobility_df = mobility_df.loc[
-        mobility_df["visitor_home_aggregation"] > SAFEGRAPH_MOBILITY_CUTOFF
+        mobility_df["visitor_home_aggregation"] > safegraph_mobility_cutoff
     ]
     mobility_df = mobility_df.loc[
         (mobility_df["cbsa_orig"].isin(cbsa_list))
@@ -369,11 +442,11 @@ def get_safegraph_mobility_data(cbsa_list=None):
     return mobility_df
 
 
-def get_mobility_df_by_source(mobility_source, cbsa_list=None):
+def get_mobility_df_by_source(mobility_source, cbsa_list=None, cfg=None):
     if mobility_source == "advan":
-        return get_advan_mobility_data(cbsa_list)
+        return get_advan_mobility_data(cbsa_list, cfg=cfg)
     if mobility_source == "safegraph":
-        return get_safegraph_mobility_data(cbsa_list)
+        return get_safegraph_mobility_data(cbsa_list, cfg=cfg)
     raise ValueError(f"Unsupported mobility_source '{mobility_source}'")
 
 
@@ -384,6 +457,7 @@ def create_edge_index(
     include_temporal_edges=True,
     mobility_source="advan",
     mobility_df=None,
+    cfg=None,
 ):
     """
     Creates edge index DataFrame representing spatial and temporal edges.
@@ -404,7 +478,15 @@ def create_edge_index(
     coo_list = []
 
     if mobility_df is None:
-        mobility_df = get_mobility_df_by_source(mobility_source, cbsa_list)
+        mobility_df = get_mobility_df_by_source(mobility_source, cbsa_list, cfg=cfg)
+
+    # Get temporal edge window size from config
+    if cfg is not None and hasattr(cfg, "data"):
+        temporal_edge_window_size = _get_config_value(
+            cfg.data, "temporal_edge_window_size", _DEFAULT_TEMPORAL_EDGE_WINDOW_SIZE
+        )
+    else:
+        temporal_edge_window_size = _DEFAULT_TEMPORAL_EDGE_WINDOW_SIZE
 
     print("Creating spatial edges...")
     for index, row in tqdm(
@@ -431,11 +513,11 @@ def create_edge_index(
     if include_temporal_edges:
         print("Creating temporal edges...")
         temp_count = 0
-        for base_day_idx in range(0, len(dates) - TEMPORAL_EDGE_WINDOW_SIZE):
+        for base_day_idx in range(0, len(dates) - temporal_edge_window_size):
             base_day = dates[base_day_idx]
             base_str = base_day.strftime("%Y-%m-%d")
             for future_day in dates[
-                base_day_idx + 1 : base_day_idx + TEMPORAL_EDGE_WINDOW_SIZE + 1
+                base_day_idx + 1 : base_day_idx + temporal_edge_window_size + 1
             ]:
                 future_str = future_day.strftime("%Y-%m-%d")
 
@@ -464,7 +546,7 @@ def create_edge_index(
     return coo_df
 
 
-def process_mobility_report(cbsa_list=None):
+def process_mobility_report(cbsa_list=None, cfg=None):
     """
     Processes Google Community Mobility Reports data for all counties.
 
@@ -474,14 +556,32 @@ def process_mobility_report(cbsa_list=None):
 
     Imputes missing values then performs PCA and returns df with first two components.
 
+    Args:
+        cbsa_list (list, optional): List of CBSA codes.
+        cfg (DictConfig, optional): Hydra config object.
+
     Returns:
         pandas.DataFrame: Columns include FIPS code, date, and mobility indicators.
     """
+    # Get config values or defaults
+    if cfg is not None and hasattr(cfg, "data"):
+        raw_mobility_report_dir = _get_config_value(
+            cfg.data, "raw_mobility_report_dir", _DEFAULT_RAW_MOBILITY_REPORT_DIR
+        )
+        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
+        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
+        pop_url = _get_config_value(cfg.data, "pop_url", _DEFAULT_POP_URL)
+    else:
+        raw_mobility_report_dir = _DEFAULT_RAW_MOBILITY_REPORT_DIR
+        start_date = _DEFAULT_START_DATE
+        end_date = _DEFAULT_END_DATE
+        pop_url = _DEFAULT_POP_URL
+
     DTYPE = {
         "census_fips_code": "str",
         "date": "str",
     }
-    files = glob.glob(RAW_MOBILITY_REPORT_DIR + "/*.csv")
+    files = glob.glob(raw_mobility_report_dir + "/*.csv")
     li = []
     for file in files:
         df = pd.read_csv(file, dtype=DTYPE)
@@ -505,8 +605,8 @@ def process_mobility_report(cbsa_list=None):
 
     county_mobility_report_df = mobility_report_df.loc[
         ~(mobility_report_df["census_fips_code"].isna())
-        & (START_DATE <= mobility_report_df["date"])
-        & (mobility_report_df["date"] <= END_DATE),
+        & (start_date <= mobility_report_df["date"])
+        & (mobility_report_df["date"] <= end_date),
         subset_cols,
     ]
     county_mobility_report_df.rename(columns={"census_fips_code": "FIPS"}, inplace=True)
@@ -627,16 +727,20 @@ def process_mobility_report(cbsa_list=None):
             "CTYNAME",
         ]
     }
-    print("Reading population data from", POP_URL)
-    # pop_df = pd.read_csv(
-    #     POP_URL, usecols=fields, converters=converters, encoding="ISO-8859-1"
-    # )
-    pop_df = pd.read_csv(
-        "../data/raw/co-est2023-alldata.csv",
-        usecols=fields,
-        converters=converters,
-        encoding="ISO-8859-1",
-    )
+    print("Reading population data from", pop_url)
+    # Try to use local file first, fallback to URL
+    local_pop_file = "../data/raw/co-est2023-alldata.csv"
+    if os.path.exists(local_pop_file):
+        pop_df = pd.read_csv(
+            local_pop_file,
+            usecols=fields,
+            converters=converters,
+            encoding="ISO-8859-1",
+        )
+    else:
+        pop_df = pd.read_csv(
+            pop_url, usecols=fields, converters=converters, encoding="ISO-8859-1"
+        )
     pop_df = pop_df.loc[pop_df["SUMLEV"] == "050"]
     pop_df["FIPS"] = pop_df["STATE"] + pop_df["COUNTY"]
 
@@ -818,24 +922,46 @@ def process_safegraph_data(dates, node_dict, coo_df, cbsa_list=None, mobility_df
     return edge_weights
 
 
-def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21):
+def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21, cfg=None):
     """
     Processes hospitalization data for US CBSAs.
+
+    Args:
+        cbsa_list (list, optional): List of CBSA codes.
+        max_missing_weeks (int): Maximum missing weeks allowed (default: 21).
+        cfg (DictConfig, optional): Hydra config object.
     """
-    hosp_df = pd.read_csv(RAW_HOSPITALZATION_FILE, dtype={"fips_code": str})
+    # Get config values or defaults
+    if cfg is not None and hasattr(cfg, "data"):
+        raw_hospitalization_file = _get_config_value(
+            cfg.data, "raw_hospitalization_file", _DEFAULT_RAW_HOSPITALZATION_FILE
+        )
+        hosp_col = _get_config_value(cfg.data, "hosp_col", _DEFAULT_HOSP_COL)
+        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
+        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
+        max_missing_weeks = _get_config_value(
+            cfg.data, "max_missing_weeks", max_missing_weeks
+        )
+    else:
+        raw_hospitalization_file = _DEFAULT_RAW_HOSPITALZATION_FILE
+        hosp_col = _DEFAULT_HOSP_COL
+        start_date = _DEFAULT_START_DATE
+        end_date = _DEFAULT_END_DATE
+
+    hosp_df = pd.read_csv(raw_hospitalization_file, dtype={"fips_code": str})
 
     hosp_df["collection_week"] = pd.to_datetime(hosp_df["collection_week"])
     # Shift dates forward by one day to align with advan data
     hosp_df["collection_week"] = hosp_df["collection_week"] + pd.Timedelta(days=1)
 
-    # filter  between START_DATE and END_DATE
+    # filter  between start_date and end_date
     hosp_df = hosp_df.loc[
-        (hosp_df["collection_week"] >= START_DATE)
-        & (hosp_df["collection_week"] <= END_DATE)
+        (hosp_df["collection_week"] >= start_date)
+        & (hosp_df["collection_week"] <= end_date)
     ]
 
     # cutoff by max missing weeks
-    dates = get_date_range(START_DATE, END_DATE)
+    dates = get_date_range(start_date, end_date)
     total_weeks = len(dates)
 
     # Calculate reporting statistics per hospital
@@ -869,10 +995,10 @@ def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21):
     hosp_df = hosp_df.loc[hosp_df["missing_weeks"] <= max_missing_weeks]
 
     # clean hospitalization column
-    hosp_df[HOSP_COL] = hosp_df[HOSP_COL].replace("-999,999", 0)
-    hosp_df[HOSP_COL] = hosp_df[HOSP_COL].replace(-999999, 0)
+    hosp_df[hosp_col] = hosp_df[hosp_col].replace("-999,999", 0)
+    hosp_df[hosp_col] = hosp_df[hosp_col].replace(-999999, 0)
 
-    hosp_df[HOSP_COL] = pd.to_numeric(hosp_df[HOSP_COL], errors="coerce")
+    hosp_df[hosp_col] = pd.to_numeric(hosp_df[hosp_col], errors="coerce")
 
     # manually fix fips codes that are not in the county_cbsa_map
     manual_fips_fixes = {
@@ -898,7 +1024,7 @@ def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21):
         county_cbsa_map, left_on="fips_code", right_on="COUNTY", how="inner"
     )
 
-    hosp_df = hosp_df.groupby(["CBSA", "collection_week"])[HOSP_COL].sum().reset_index()
+    hosp_df = hosp_df.groupby(["CBSA", "collection_week"])[hosp_col].sum().reset_index()
     hosp_df = hosp_df.loc[hosp_df["CBSA"] != "99999"]
 
     if cbsa_list is None:
@@ -906,7 +1032,7 @@ def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21):
     hosp_df = hosp_df[hosp_df["CBSA"].isin(cbsa_list)]
 
     # ensure all CBSAs have full date range and fill missing values with 0
-    dates = get_date_range(START_DATE, END_DATE)
+    dates = get_date_range(start_date, end_date)
     multi_index = pd.MultiIndex.from_product(
         [hosp_df["CBSA"].unique(), dates], names=["CBSA", "collection_week"]
     )
@@ -929,13 +1055,17 @@ def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21):
     return hosp_df
 
 
-def process_case_death_data(cbsa_list=None):
+def process_case_death_data(cbsa_list=None, cfg=None):
     """
     Processes case and death data for US CBSAs.
 
     Reads raw case and death data from RAW_CASE_URL and RAW_DEATH_URL, converts the
     'date' column to datetime format, and extracts relevant subsets of data
     within the specified date range (START_DATE to END_DATE).
+
+    Args:
+        cbsa_list (list, optional): List of CBSA codes.
+        cfg (DictConfig, optional): Hydra config object.
 
     Returns:
         tuple: A tuple containing two DataFrames:
@@ -949,7 +1079,23 @@ def process_case_death_data(cbsa_list=None):
         next day's 7-day average.
         It also computes previous case counts for each day within the time window.
     """
-    death_df = pd.read_csv(RAW_DEATH_URL, dtype={"UID": str})
+    # Get config values or defaults
+    if cfg is not None and hasattr(cfg, "data"):
+        raw_death_url = _get_config_value(
+            cfg.data, "raw_death_url", _DEFAULT_RAW_DEATH_URL
+        )
+        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
+        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
+        time_window_size = _get_config_value(
+            cfg.data, "time_window_size", _DEFAULT_TIME_WINDOW_SIZE
+        )
+    else:
+        raw_death_url = _DEFAULT_RAW_DEATH_URL
+        start_date = _DEFAULT_START_DATE
+        end_date = _DEFAULT_END_DATE
+        time_window_size = _DEFAULT_TIME_WINDOW_SIZE
+
+    death_df = pd.read_csv(raw_death_url, dtype={"UID": str})
     # case_df = pd.read_csv(RAW_CASE_URL, dtype={"UID": str})
 
     # # fill in FIPS code for using the last 5 digits of the UID code
@@ -973,10 +1119,10 @@ def process_case_death_data(cbsa_list=None):
 
     death_df = death_df.loc[
         (
-            pd.to_datetime(START_DATE) - pd.Timedelta(days=TIME_WINDOW_SIZE + 1)
+            pd.to_datetime(start_date) - pd.Timedelta(days=time_window_size + 1)
             <= death_df["date"]
         )
-        & (death_df["date"] <= END_DATE)
+        & (death_df["date"] <= end_date)
     ]
     # case_df = case_df.loc[
     #     (
@@ -1060,10 +1206,10 @@ def process_case_death_data(cbsa_list=None):
     case_df["date"] = pd.to_datetime(case_df["date"], format="%m/%d/%Y")
     case_df = case_df.loc[
         (
-            pd.to_datetime(START_DATE) - pd.Timedelta(days=TIME_WINDOW_SIZE + 1)
+            pd.to_datetime(start_date) - pd.Timedelta(days=time_window_size + 1)
             <= case_df["date"]
         )
-        & (case_df["date"] <= END_DATE)
+        & (case_df["date"] <= end_date)
     ]
     ##################################################################################
     ##################################################################################
@@ -1129,7 +1275,7 @@ def process_case_death_data(cbsa_list=None):
 
     lagged_case_cols = []
     lagged_death_cols = []
-    for dd in range(TIME_WINDOW_SIZE - 1):
+    for dd in range(time_window_size - 1):
         lagged_case_col = case_df.groupby("CBSA")["CASE_COUNT"].shift(dd + 1).fillna(0)
         lagged_case_cols.append(lagged_case_col.rename(f"CASE_COUNT_PREV_{dd}"))
         lagged_death_col = (
@@ -1140,17 +1286,17 @@ def process_case_death_data(cbsa_list=None):
     death_df = pd.concat([death_df] + lagged_death_cols, axis=1)
 
     # correct the 7 day average so that it's not rounding to integers
-    case_df[f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"] = case_df[
-        [f"CASE_COUNT_PREV_{i}" for i in range(TIME_WINDOW_SIZE - 1)] + ["CASE_COUNT"]
+    case_df[f"CASE_COUNT_{time_window_size}DAY_AVG"] = case_df[
+        [f"CASE_COUNT_PREV_{i}" for i in range(time_window_size - 1)] + ["CASE_COUNT"]
     ].mean(axis=1)
-    death_df[f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"] = death_df[
-        [f"DEATH_COUNT_PREV_{i}" for i in range(TIME_WINDOW_SIZE - 1)] + ["DEATH_COUNT"]
+    death_df[f"DEATH_COUNT_{time_window_size}DAY_AVG"] = death_df[
+        [f"DEATH_COUNT_PREV_{i}" for i in range(time_window_size - 1)] + ["DEATH_COUNT"]
     ].mean(axis=1)
 
     # compute deltas
     case_df = case_df.sort_values(by=["date", "CBSA"])
     case_df["CASE_DELTA"] = (
-        case_df.groupby(["CBSA"])[f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
+        case_df.groupby(["CBSA"])[f"CASE_COUNT_{time_window_size}DAY_AVG"]
         .diff(1)
         .fillna(0)
     )
@@ -1158,7 +1304,7 @@ def process_case_death_data(cbsa_list=None):
 
     death_df = death_df.sort_values(by=["date", "CBSA"])
     death_df["DEATH_DELTA"] = (
-        death_df.groupby(["CBSA"])[f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG"]
+        death_df.groupby(["CBSA"])[f"DEATH_COUNT_{time_window_size}DAY_AVG"]
         .diff(1)
         .fillna(0)
     )
@@ -1169,7 +1315,7 @@ def process_case_death_data(cbsa_list=None):
         "CBSA",
         "node_key",
         "DEATH_DELTA",
-        f"DEATH_COUNT_{TIME_WINDOW_SIZE}DAY_AVG",
+        f"DEATH_COUNT_{time_window_size}DAY_AVG",
         "DEATH_COUNT",
         "DEATH_COUNT_PREV_0",
         "DEATH_COUNT_PREV_1",
@@ -1183,7 +1329,7 @@ def process_case_death_data(cbsa_list=None):
         "CBSA",
         "node_key",
         "CASE_DELTA",
-        f"CASE_COUNT_{TIME_WINDOW_SIZE}DAY_AVG",
+        f"CASE_COUNT_{time_window_size}DAY_AVG",
         "CASE_COUNT",
         "CASE_COUNT_PREV_0",
         "CASE_COUNT_PREV_1",
@@ -1193,11 +1339,11 @@ def process_case_death_data(cbsa_list=None):
         "CASE_COUNT_PREV_5",
     ]
     death_df = death_df.loc[
-        (START_DATE <= death_df["date"]) & (death_df["date"] <= END_DATE),
+        (start_date <= death_df["date"]) & (death_df["date"] <= end_date),
         death_subset_cols,
     ]
     case_df = case_df.loc[
-        (START_DATE <= case_df["date"]) & (case_df["date"] <= END_DATE),
+        (start_date <= case_df["date"]) & (case_df["date"] <= end_date),
         case_subset_cols,
     ]
 
