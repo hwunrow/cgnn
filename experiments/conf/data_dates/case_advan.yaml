@@ -1,0 +1,6 @@
+data:
+  start_date: "03/22/2020"
+  end_date: "12/31/2022"
+model:
+  node_features: 16
+  target_feature_idx: 1

@@ -1,0 +1,14 @@
+Experiment Submission Summary
+Timestamp: 20251121_153510
+Total jobs submitted: 8
+
+Job ID | Experiment Name
+------ | ----------------
+4950687 | hospital_advan_cutoff500
+4950688 | hospital_advan_cutoff1000
+4950689 | hospital_safegraph_cutoff500
+4950690 | hospital_safegraph_cutoff1000
+4950691 | case_advan_cutoff500
+4950692 | case_advan_cutoff1000
+4950693 | case_safegraph_cutoff500
+4950694 | case_safegraph_cutoff1000
