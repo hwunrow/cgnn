@@ -2,7 +2,7 @@
 
 ## Download from API
 ```
-uvx --from deweypy dewey --api-key akv1_acTbB7zhgC3evEOaq0U7N0_oeUVhXFIHH3w speedy-download fldr_bpyousrmfggrfubk --partition-key-before 2020-12-31 --partition-key-after 2020-01-06 --skip-existing
+uvx --from deweypy dewey --api-key API_KEY speedy-download fldr_bpyousrmfggrfubk --partition-key-before 2020-12-31 --partition-key-after 2020-01-06 --skip-existing
 ```
 
 ## Process bathces in parallel
