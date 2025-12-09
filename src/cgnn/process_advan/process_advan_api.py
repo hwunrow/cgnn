@@ -60,6 +60,7 @@ os.makedirs(log_dir, exist_ok=True)
 files = sorted(glob.glob(f"{source}/{args.file_extension}", recursive=True))
 
 fields = [
+    "placekey",
     "date_range_start",
     "date_range_end",
     "postal_code",
@@ -82,6 +83,9 @@ zip_cbsa_map = get_zip_cbsa_map()
 if batch_index >= len(batch_list):
     print(f"Batch index {batch_index} is out of range.")
     exit(1)
+
+# Load shared polygon info
+shared_poi_df = pd.read_csv("/Users/hwunrow/Documents/GitHub/cgnn/data/raw/advan/patterns-shared-polygon-info.csv")
 
 
 def process_visitor_data_vectorized(batch_df):
@@ -161,7 +165,7 @@ def process_batch_optimized(i):
         print(f"{na_rows} ({na_rows / nrows * 100 :.2f}%) rows out of {nrows} have NAs")
         df = df.dropna()
         with open(
-            f"{output_dir}/logs/nan_log_batch{i}.csv", "a", newline=""
+            f"{log_dir}/nan_log_batch{i}.csv", "a", newline=""
         ) as csvfile:
             fieldnames = ["file", "na_rows", "nrows"]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -176,6 +180,40 @@ def process_batch_optimized(i):
         df = df.loc[df["visitor_home_aggregation"] != ""]
         li.append(df)
     batch_df = pd.concat(li, axis=0, ignore_index=True)
+    
+    print("filter out duplicates")
+    rows_before_filter = len(batch_df)
+    batch_df = batch_df.drop_duplicates()
+    rows_after_filter = len(batch_df)
+    rows_filtered = rows_before_filter - rows_after_filter
+    with open(
+        f"{log_dir}/duplicate_log_batch{i}.csv", "a", newline=""
+    ) as csvfile:
+        fieldnames = ["batch_index", "rows_before_filter", "rows_after_filter", "rows_filtered", "filter_percentage"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if i == 0:
+            writer.writeheader()
+    print(f"after dropping duplicates: {batch_df.shape[0]} rows")
+
+    print("filtering out shared POIs")
+    rows_before_filter = len(batch_df)
+    batch_df = batch_df[~batch_df['placekey'].isin(shared_poi_df['PLACEKEY_SHARED'])]
+    rows_after_filter = len(batch_df)
+    rows_filtered = rows_before_filter - rows_after_filter
+    with open(
+        f"{log_dir}/shared_poi_log_batch{i}.csv", "a", newline=""
+    ) as csvfile:
+        fieldnames = ["batch_index", "rows_before_filter", "rows_after_filter", "rows_filtered", "filter_percentage"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if i == 0:
+            writer.writeheader()
+        writer.writerow({
+            "batch_index": i,
+            "rows_before_filter": rows_before_filter,
+            "rows_after_filter": rows_after_filter,
+            "rows_filtered": rows_filtered,
+            "filter_percentage": (rows_filtered / rows_before_filter * 100) if rows_before_filter > 0 else 0
+        })
 
     print("unloading json visitor_home_aggregation")
     start_time = time.time()
@@ -213,6 +251,14 @@ def process_batch_optimized(i):
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"pd.merge took {elapsed_time:.4f} seconds")
+
+    print("convert dates to Y-m-d format")
+    start_time = time.time()
+    sum_df["date_range_start"] = sum_df["date_range_start"].str[:10]
+    sum_df["date_range_end"] = sum_df["date_range_end"].str[:10]
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"convert dates to Y-m-d format took {elapsed_time:.4f} seconds")
 
     print("pd.groupby")
     start_time = time.time()
