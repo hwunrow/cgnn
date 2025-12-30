@@ -10,84 +10,6 @@ import csv
 
 from cgnn.process_xwalk import get_zip_cbsa_map
 
-# Parse command line arguments
-parser = argparse.ArgumentParser(description="Process a batch of files.")
-parser.add_argument(
-    "--source",
-    type=str,
-    default="/Users/hwunrow/Documents/GitHub/cgnn/data/raw/advan/dewey-downloads/weekly-patterns/",
-    required=False,
-    help="Source directory",
-)
-parser.add_argument(
-    "--out",
-    type=str,
-    required=True,
-    help="Output directory",
-)
-parser.add_argument(
-    "--batchsize",
-    type=int,
-    default=500,
-    required=False,
-    help="Number of files to process in each batch",
-)
-parser.add_argument(
-    "--batch-index",
-    type=int,
-    default=0,
-    required=False,
-    help="Index of the batch to process",
-)
-parser.add_argument(
-    "--file-extension",
-    type=str,
-    default="*.gz",
-    required=False,
-    help="File extension for glob pattern",
-)
-args = parser.parse_args()
-
-source = args.source
-output_dir = args.out
-batchsize = args.batchsize
-batch_index = args.batch_index
-
-log_dir = os.path.join(output_dir, "logs")
-os.makedirs(log_dir, exist_ok=True)
-
-# Load file paths
-files = sorted(glob.glob(f"{source}/{args.file_extension}", recursive=True))
-
-fields = [
-    "placekey",
-    "date_range_start",
-    "date_range_end",
-    "postal_code",
-    "iso_country_code",
-    "visitor_home_aggregation",
-]
-
-# Split files into batches
-batch_list = [files[i : i + batchsize] for i in range(0, len(files), batchsize)]
-
-# Load mappings - read ZIP and TRACT as strings to preserve leading zeros
-tract_zip_map = pd.read_csv(
-    "/Users/hwunrow/Documents/GitHub/cgnn/data/raw/ZIP_TRACT_032020.csv",
-    dtype={"ZIP": str, "TRACT": str},
-)
-
-zip_cbsa_map = get_zip_cbsa_map()
-
-# Ensure the batch index is within range
-if batch_index >= len(batch_list):
-    print(f"Batch index {batch_index} is out of range.")
-    exit(1)
-
-# Load shared polygon info
-shared_poi_df = pd.read_csv("/Users/hwunrow/Documents/GitHub/cgnn/data/raw/advan/patterns-shared-polygon-info.csv")
-
-
 def process_visitor_data_vectorized(batch_df):
     """
     Process visitor home aggregation data using itertuples for better performance.
@@ -193,6 +115,13 @@ def process_batch_optimized(i):
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         if i == 0:
             writer.writeheader()
+        writer.writerow({
+            "batch_index": i,
+            "rows_before_filter": rows_before_filter,
+            "rows_after_filter": rows_after_filter,
+            "rows_filtered": rows_filtered,
+            "filter_percentage": (rows_filtered / rows_before_filter * 100) if rows_before_filter > 0 else 0
+        })
     print(f"after dropping duplicates: {batch_df.shape[0]} rows")
 
     print("filtering out shared POIs")
@@ -282,4 +211,82 @@ def process_batch_optimized(i):
 
 
 # Process the batch
-process_batch_optimized(batch_index)
+if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Process a batch of files.")
+    parser.add_argument(
+        "--source",
+        type=str,
+        default="/Users/hwunrow/Documents/GitHub/cgnn/data/raw/advan/dewey-downloads/weekly-patterns/",
+        required=False,
+        help="Source directory",
+    )
+    parser.add_argument(
+        "--out",
+        type=str,
+        required=True,
+        help="Output directory",
+    )
+    parser.add_argument(
+        "--batchsize",
+        type=int,
+        default=500,
+        required=False,
+        help="Number of files to process in each batch",
+    )
+    parser.add_argument(
+        "--batch-index",
+        type=int,
+        default=0,
+        required=False,
+        help="Index of the batch to process",
+    )
+    parser.add_argument(
+        "--file-extension",
+        type=str,
+        default="*.gz",
+        required=False,
+        help="File extension for glob pattern",
+    )
+    args = parser.parse_args()
+
+    source = args.source
+    output_dir = args.out
+    batchsize = args.batchsize
+    batch_index = args.batch_index
+
+    log_dir = os.path.join(output_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Load file paths
+    files = sorted(glob.glob(f"{source}/{args.file_extension}", recursive=True))
+
+    fields = [
+        "placekey",
+        "date_range_start",
+        "date_range_end",
+        "postal_code",
+        "iso_country_code",
+        "visitor_home_aggregation",
+    ]
+
+    # Split files into batches
+    batch_list = [files[i : i + batchsize] for i in range(0, len(files), batchsize)]
+
+    # Load mappings - read ZIP and TRACT as strings to preserve leading zeros
+    tract_zip_map = pd.read_csv(
+        "/Users/hwunrow/Documents/GitHub/cgnn/data/raw/ZIP_TRACT_032020.csv",
+        dtype={"ZIP": str, "TRACT": str},
+    )
+
+    zip_cbsa_map = get_zip_cbsa_map()
+
+    # Ensure the batch index is within range
+    if batch_index >= len(batch_list):
+        print(f"Batch index {batch_index} is out of range.")
+        exit(1)
+
+    # Load shared polygon info
+    shared_poi_df = pd.read_csv("/Users/hwunrow/Documents/GitHub/cgnn/data/raw/advan/patterns-shared-polygon-info.csv")
+
+    process_batch_optimized(batch_index)
