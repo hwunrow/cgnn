@@ -1,0 +1,70 @@
+data:
+  version: test
+  start_date: 03/22/2020
+  end_date: 12/31/2020
+  train_split_idx: 10
+  time_window_size: 7
+  temporal_edge_window_size: 1
+  mobility_cutoff: 500
+  raw_death_url: https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv
+  raw_case_url: https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv
+  raw_safegraph_file: /burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/safegraph/all_harddrive_us.csv
+  raw_mobility_report_dir: /burg/apam/users/nhw2114/repos/cgnn/data/raw/google_mobility_reports/
+  pop_url: https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv
+  raw_hospitalization_file: /burg/apam/users/nhw2114/repos/cgnn/data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv
+  raw_advan_file: /burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan/all_advan_fix.csv
+  hosp_col: total_adult_patients_hospitalized_confirmed_covid_7_day_sum
+  max_missing_weeks: 21
+  data_source: hospital
+  mobility_source: advan
+  feature_cols:
+  - CASE_COUNT
+  - CASE_COUNT_7DAY_AVG
+  - CASE_COUNT_PREV_0
+  - CASE_COUNT_PREV_1
+  - CASE_COUNT_PREV_2
+  - CASE_COUNT_PREV_3
+  - CASE_COUNT_PREV_4
+  - CASE_COUNT_PREV_5
+  - DEATH_COUNT
+  - DEATH_COUNT_7DAY_AVG
+  - DEATH_COUNT_PREV_0
+  - DEATH_COUNT_PREV_1
+  - DEATH_COUNT_PREV_2
+  - DEATH_COUNT_PREV_3
+  - DEATH_COUNT_PREV_4
+  - DEATH_COUNT_PREV_5
+model:
+  node_features: 1
+  target_feature_idx: 0
+  out_dim: 1
+  gcn:
+    dropout: 0.5
+    hidden_dim: 32
+training:
+  optimizer: adam
+  learning_rate: 1.0e-05
+  weight_decay: 0.0005
+  num_epochs: 5000
+  loss_function: rmsle
+explain:
+  epochs: 200
+  prev_weeks: 4
+  explain_dates: null
+  explanation_type: model
+  node_mask_type: attributes
+  edge_mask_type: object
+  model_config:
+    mode: regression
+    task_level: node
+    return_type: raw
+  verbose: false
+  edge_mask_threshold: 0.5
+data_dates:
+  data:
+    start_date: 07/13/2020
+    end_date: 04/22/2024
+  model:
+    node_features: 1
+    target_feature_idx: 0
+

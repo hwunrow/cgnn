@@ -1,0 +1,4 @@
+- data.data_source=case
+- data.mobility_source=safegraph
+- data.mobility_cutoff=1000
+- +data_dates=case_safegraph

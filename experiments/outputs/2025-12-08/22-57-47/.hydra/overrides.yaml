@@ -1,0 +1,4 @@
+- data=case_advan
+- model=gcn_case
+- data.version=case_new_advan_cutoff1000
+- data.mobility_cutoff=1000

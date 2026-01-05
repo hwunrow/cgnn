@@ -11,7 +11,7 @@
 # Usage: sbatch --job-name=cgnn_hospital_advan_cutoff500 \
 #              --output=/burg/home/nhw2114/cgnn_hospital_advan_cutoff500.log \
 #              --error=/burg/home/nhw2114/cgnn_hospital_advan_cutoff500.err \
-#              main.sh data.data_source=hospital data.mobility_source=advan data.mobility_cutoff=500 data_dates=hospital_advan
+#              main.sh data=hospital_advan model=gcn_hospital
 
 # load cuda
 module load cuda11.8/toolkit/11.8.0

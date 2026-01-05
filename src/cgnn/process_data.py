@@ -39,6 +39,7 @@ _DEFAULT_RAW_MOBILITY_REPORT_DIR = (
 _DEFAULT_POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
 _DEFAULT_RAW_HOSPITALZATION_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
 _DEFAULT_HOSP_COL = "total_adult_patients_hospitalized_confirmed_covid_7_day_sum"
+<<<<<<< Updated upstream
 <<<<<<< HEAD
 _DEFAULT_RAW_ADVAN_FILE = "../data/raw/mobility/advan/all_advan_fix.csv"
 _DEFAULT_RAW_ADVAN_PLUS_FILE = "/Users/hwunrow/Documents/GitHub/cgnn/data/raw/advan_plus/all_advan_plus.csv"
@@ -47,6 +48,9 @@ _DEFAULT_RAW_ADVAN_FILE = (
     "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan/all_advan_fix.csv"
 )
 >>>>>>> dab5e51 (Use full filepaths)
+=======
+_DEFAULT_RAW_ADVAN_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan/all_advan_filter_shared_pois.csv"
+>>>>>>> Stashed changes
 _DEFAULT_MAX_MISSING_WEEKS = 21
 
 

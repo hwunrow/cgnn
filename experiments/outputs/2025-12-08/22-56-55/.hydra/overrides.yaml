@@ -1,0 +1,4 @@
+- data=hospital_advan
+- model=gcn_hospital
+- data.version=hospital_new_advan_cutoff500
+- data.mobility_cutoff=500

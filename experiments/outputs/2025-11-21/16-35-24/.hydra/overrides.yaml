@@ -1,0 +1,4 @@
+- data.data_source=hospital
+- data.mobility_source=safegraph
+- data.mobility_cutoff=500
+- +data_dates=hospital_safegraph

@@ -9,6 +9,9 @@ Usage:
     # Run with different data source
     python main.py data.data_source=case
 
+    # Run with config group
+    python main.py data=hospital_safegraph model=gcn_hospital data.mobility_cutoff=500
+
     # Override hyperparameters
     python main.py training.learning_rate=1e-4 training.num_epochs=10000
 
@@ -17,7 +20,8 @@ Usage:
 """
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+from torch_geometric.nn import summary
 import torch
 import pickle
 import os
@@ -42,12 +46,12 @@ def main(cfg: DictConfig) -> None:
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    print("Config:")
+    print(OmegaConf.to_yaml(cfg))
+
     # Auto-generate version name from config parameters
     # Format: {data_source}_{mobility_source}_cutoff{mobility_cutoff}
-    version = f"{cfg.data.data_source}_{cfg.data.mobility_source}_cutoff{cfg.data.mobility_cutoff}"
-
-    # Override config's version with generated name
-    cfg.data.version = version
+    version = cfg.data.version
 
     print("=" * 70)
     print("CGNN Pipeline")
@@ -77,13 +81,15 @@ def main(cfg: DictConfig) -> None:
     print(f"  Test nodes: {data.test_mask.sum().item()}")
 
     # Save data as .pt file for easy loading
-    data_path = f"data/processed/{version}/data.pt"
+    data_path = f"/burg/apam/users/nhw2114/repos/cgnn/data/processed/{version}/data.pt"
     torch.save(data, data_path)
     print(f"  Data saved to {data_path}")
 
     # Step 2: Train model
     print("\n[2/4] Training model...")
     graph = data.to(device)
+    print("Graph structure:")
+    print(graph)
 
     # Initialize model with config
     model = GCN(dropout=None, cfg=cfg).to(device)
@@ -100,9 +106,13 @@ def main(cfg: DictConfig) -> None:
     print(f"  Learning rate: {cfg.training.learning_rate}")
     print(f"  Weight decay: {cfg.training.weight_decay}")
     print(f"  Epochs: {cfg.training.num_epochs}")
+
+    print("\nModel summary:")
+    print(summary(model, graph.x, graph.edge_index, graph.edge_weight))
+
     print(f"  Training...")
 
-    # Training loop
+    # Training loopsq
     train_losses = []
     test_losses = []
     best_test_loss = float("inf")
@@ -136,7 +146,9 @@ def main(cfg: DictConfig) -> None:
                 )
 
     # Save model
-    model_save_dir = f"models/gcn_checkpoints/{version}"
+    model_save_dir = (
+        f"/burg/apam/users/nhw2114/repos/cgnn/models/gcn_checkpoints/{version}"
+    )
     os.makedirs(model_save_dir, exist_ok=True)
     model_path = os.path.join(model_save_dir, "gcn_final_model.pt")
 
@@ -189,7 +201,9 @@ def main(cfg: DictConfig) -> None:
     print("\n[4/4] Running explainer...")
 
     # Load node_dict
-    node_dict_path = f"data/processed/{version}/node_dict.pkl"
+    node_dict_path = (
+        f"/burg/apam/users/nhw2114/repos/cgnn/data/processed/{version}/node_dict.pkl"
+    )
     if not os.path.exists(node_dict_path):
         raise FileNotFoundError(f"Node dict not found at {node_dict_path}")
 
@@ -274,7 +288,7 @@ def main(cfg: DictConfig) -> None:
         }
     )
     # save explain counts
-    plot_save_dir = f"data/plots/{version}"
+    plot_save_dir = f"/burg/apam/users/nhw2114/repos/cgnn/plots/{version}"
     os.makedirs(plot_save_dir, exist_ok=True)
     explain_count_df.to_csv(f"{plot_save_dir}/explain_count.csv", index=False)
 

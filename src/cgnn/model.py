@@ -69,6 +69,10 @@ class GCN(nn.Module):
             dropout = dropout if dropout is not None else _DEFAULT_DROPOUT
             hidden_dim = 32
 
+        print(
+            f"Initializing GCN with node_features={node_features}, hidden_dim={hidden_dim}"
+        )
+
         self.MLP_embed = nn.Linear(node_features, hidden_dim)
         self.conv1 = GCNConv(hidden_dim, hidden_dim)
         self.conv2 = GCNConv(hidden_dim * 2, hidden_dim)

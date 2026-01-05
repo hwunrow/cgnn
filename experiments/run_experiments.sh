@@ -40,13 +40,14 @@ for data_source in "${DATA_SOURCES[@]}"; do
             
             # Determine date config based on data_source and mobility_source
             DATE_CONFIG="${data_source}_${mobility_source}"
+            MODEL_CONFIG="gcn_${data_source}"
             
             # Generate unique log file names
             LOG_FILE="${LOG_DIR}/cgnn_${VERSION}_${TIMESTAMP}.log"
             ERR_FILE="${LOG_DIR}/cgnn_${VERSION}_${TIMESTAMP}.err"
             
             # Build Hydra parameter string
-            HYDRA_PARAMS="data.data_source=${data_source} data.mobility_source=${mobility_source} data.mobility_cutoff=${mobility_cutoff} +data_dates=${DATE_CONFIG}"
+            HYDRA_PARAMS="data=${DATE_CONFIG} model=${MODEL_CONFIG} data.mobility_cutoff=${mobility_cutoff}"
             
             # Submit SLURM job
             echo "Submitting: ${VERSION}"

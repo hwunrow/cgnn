@@ -1,0 +1,3 @@
+- data=case_safegraph
+- model=gcn_case
+- data.mobility_cutoff=500

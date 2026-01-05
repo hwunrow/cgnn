@@ -21,7 +21,7 @@ def get_cbsa_list(hhs_region=None):
     if hhs_region is None:
         return all_cbsas
 
-    df = pd.read_csv("../data/raw/list1_2023.csv")
+    df = pd.read_csv("/burg/apam/users/nhw2114/repos/cgnn/data/raw/list1_2023.csv")
     df = df.iloc[:-3]  # Remove footer rows
 
     cbsa_states = df.groupby("CBSA Code")["State Name"].apply(set).to_dict()
@@ -45,8 +45,14 @@ def get_cbsa_list(hhs_region=None):
     return filtered_cbsas
 
 
-def get_cbsa_info(cbsa_list):
-    df = pd.read_csv("../data/raw/list1_2023.csv")
+def get_cbsa_info(cbsa_list=None):
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
+
+    df = pd.read_csv(
+        "/burg/apam/users/nhw2114/repos/cgnn/data/raw/list1_2023.csv",
+        dtype={"CBSA Code": str},
+    )
     df = df.iloc[:-3]  # Remove footer rows
 
     return df.loc[df["CBSA Code"].isin(cbsa_list)]
@@ -95,12 +101,12 @@ def get_node_pos(version, idx):
 def save_config_to_directory(cfg, directory, filename="config.yaml"):
     """
     Save a Hydra config to a directory.
-    
+
     Args:
         cfg (DictConfig): The Hydra config object to save.
         directory (str): The directory path where to save the config.
         filename (str): The filename for the config file (default: "config.yaml").
-    
+
     Returns:
         str: The full path to the saved config file.
     """
