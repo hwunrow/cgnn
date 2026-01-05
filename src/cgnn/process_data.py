@@ -38,6 +38,7 @@ _DEFAULT_POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/202
 _DEFAULT_RAW_HOSPITALZATION_FILE = "../data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
 _DEFAULT_HOSP_COL = "total_adult_patients_hospitalized_confirmed_covid_7_day_sum"
 _DEFAULT_RAW_ADVAN_FILE = "../data/raw/mobility/advan/all_advan_fix.csv"
+_DEFAULT_RAW_ADVAN_PLUS_FILE = "/Users/hwunrow/Documents/GitHub/cgnn/data/raw/advan_plus/all_advan_plus.csv"
 _DEFAULT_MAX_MISSING_WEEKS = 21
 
 
@@ -356,6 +357,53 @@ def create_train_test_mask(node_dict, dates, fips_list, cfg=None):
     return train_mask, test_mask
 
 
+def get_advan_plus_mobility_data(cbsa_list=None, cfg=None):
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
+
+    # Get config values or defaults
+    if cfg is not None and hasattr(cfg, "data"):
+        raw_advan_plus_file = _get_config_value(
+            cfg.data, "raw_advan_plus_file", _DEFAULT_RAW_ADVAN_PLUS_FILE
+        )
+        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
+        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
+        mobility_cutoff = _get_config_value(
+            cfg.data, "mobility_cutoff", _DEFAULT_MOBILITY_CUTOFF
+        )
+    else:
+        raw_advan_plus_file = _DEFAULT_RAW_ADVAN_PLUS_FILE
+        start_date = _DEFAULT_START_DATE
+        end_date = _DEFAULT_END_DATE
+        mobility_cutoff = _DEFAULT_MOBILITY_CUTOFF
+
+    mobility_df = pd.read_csv(
+        raw_advan_plus_file, dtype={"cbsa_orig": str, "cbsa_dest": str}
+    )
+    mobility_df["date_range_start"] = pd.to_datetime(mobility_df["date_range_start"])
+    mobility_df["date_range_end"] = pd.to_datetime(mobility_df["date_range_end"])
+    mobility_df = mobility_df.loc[
+        (mobility_df["date_range_start"] >= pd.to_datetime(start_date))
+        & (mobility_df["date_range_start"] <= pd.to_datetime(end_date))
+    ]
+    mobility_df = mobility_df.loc[
+        mobility_df["visitor_home_aggregation"] > mobility_cutoff
+    ]
+    mobility_df = mobility_df.loc[
+        (mobility_df["cbsa_orig"].isin(cbsa_list))
+        & (mobility_df["cbsa_dest"].isin(cbsa_list))
+    ]
+
+    mobility_df["date_range_start"] = pd.to_datetime(
+        mobility_df["date_range_start"], utc=True
+    ).dt.strftime("%Y-%m-%d")
+    mobility_df["date_range_end"] = pd.to_datetime(
+        mobility_df["date_range_end"]
+    ).dt.strftime("%Y-%m-%d")
+
+    return mobility_df
+
+
 def get_advan_mobility_data(cbsa_list=None, cfg=None):
     if cbsa_list is None:
         cbsa_list = get_cbsa_list()
@@ -445,7 +493,9 @@ def get_safegraph_mobility_data(cbsa_list=None, cfg=None):
 def get_mobility_df_by_source(mobility_source, cbsa_list=None, cfg=None):
     if mobility_source == "advan":
         return get_advan_mobility_data(cbsa_list, cfg=cfg)
-    if mobility_source == "safegraph":
+    elif mobility_source == "advan_plus":
+        return get_advan_plus_mobility_data(cbsa_list, cfg=cfg)
+    elif mobility_source == "safegraph":
         return get_safegraph_mobility_data(cbsa_list, cfg=cfg)
     raise ValueError(f"Unsupported mobility_source '{mobility_source}'")
 
