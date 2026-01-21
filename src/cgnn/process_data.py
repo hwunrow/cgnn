@@ -32,13 +32,21 @@ _DEFAULT_TEMPORAL_EDGE_WINDOW_SIZE = 1
 _DEFAULT_MOBILITY_CUTOFF = 1000
 _DEFAULT_RAW_DEATH_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
 _DEFAULT_RAW_CASE_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
-_DEFAULT_RAW_SAFEGRAPH_FILE = "../data/raw/mobility/safegraph/all_harddrive_us.csv"
-_DEFAULT_RAW_MOBILITY_REPORT_DIR = "../data/raw/google_mobility_reports/"
+_DEFAULT_RAW_SAFEGRAPH_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/safegraph/all_harddrive_us.csv"
+_DEFAULT_RAW_MOBILITY_REPORT_DIR = (
+    "/burg/apam/users/nhw2114/repos/cgnn/data/raw/google_mobility_reports/"
+)
 _DEFAULT_POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
-_DEFAULT_RAW_HOSPITALZATION_FILE = "../data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
+_DEFAULT_RAW_HOSPITALZATION_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
 _DEFAULT_HOSP_COL = "total_adult_patients_hospitalized_confirmed_covid_7_day_sum"
+<<<<<<< HEAD
 _DEFAULT_RAW_ADVAN_FILE = "../data/raw/mobility/advan/all_advan_fix.csv"
 _DEFAULT_RAW_ADVAN_PLUS_FILE = "/Users/hwunrow/Documents/GitHub/cgnn/data/raw/advan_plus/all_advan_plus.csv"
+=======
+_DEFAULT_RAW_ADVAN_FILE = (
+    "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan/all_advan_fix.csv"
+)
+>>>>>>> dab5e51 (Use full filepaths)
 _DEFAULT_MAX_MISSING_WEEKS = 21
 
 
@@ -223,9 +231,15 @@ def create_torch_geometric_data(
                 .fillna(0)
             )
 
-    x_t[x_t_cols].to_csv(f"../data/processed/{version}/x_t.csv", index=False)
+    x_t[x_t_cols].to_csv(
+        f"/burg/apam/users/nhw2114/repos/cgnn/data/processed/{version}/x_t.csv",
+        index=False,
+    )
     x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
-    y_t.to_csv(f"../data/processed/{version}/y_t.csv", index=False)
+    y_t.to_csv(
+        f"/burg/apam/users/nhw2114/repos/cgnn/data/processed/{version}/y_t.csv",
+        index=False,
+    )
     y_t = torch.tensor(
         y_t.values,
         dtype=torch.float32,
@@ -255,7 +269,7 @@ def save_data(
     version,
     cfg=None,
 ):
-    path = f"../data/processed/{version}/"
+    path = f"/burg/apam/users/nhw2114/repos/cgnn/data/processed/{version}/"
     os.makedirs(path, exist_ok=True)
 
     if death_subset_df is not None:
@@ -779,7 +793,9 @@ def process_mobility_report(cbsa_list=None, cfg=None):
     }
     print("Reading population data from", pop_url)
     # Try to use local file first, fallback to URL
-    local_pop_file = "../data/raw/co-est2023-alldata.csv"
+    local_pop_file = (
+        "/burg/apam/users/nhw2114/repos/cgnn/data/raw/co-est2023-alldata.csv"
+    )
     if os.path.exists(local_pop_file):
         pop_df = pd.read_csv(
             local_pop_file,
@@ -1246,7 +1262,10 @@ def process_case_death_data(cbsa_list=None, cfg=None):
     ## READ in Teresa's data created from compiledata.m
     ## TODO: replace this with the ad-hoc fixes coded here
     ##################################################################################
-    case_df = pd.read_csv("../data/processed/teresa_case_df.csv", dtype={"FIPS": str})
+    case_df = pd.read_csv(
+        "/burg/apam/users/nhw2114/repos/cgnn/data/processed/teresa_case_df.csv",
+        dtype={"FIPS": str},
+    )
     case_df["FIPS"] = case_df["FIPS"].str.replace("'", "")
     case_df = pd.melt(
         case_df, id_vars=case_df.columns[:5], var_name="date", value_name="CASE_COUNT"
