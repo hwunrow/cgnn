@@ -39,18 +39,8 @@ _DEFAULT_RAW_MOBILITY_REPORT_DIR = (
 _DEFAULT_POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
 _DEFAULT_RAW_HOSPITALZATION_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
 _DEFAULT_HOSP_COL = "total_adult_patients_hospitalized_confirmed_covid_7_day_sum"
-<<<<<<< Updated upstream
-<<<<<<< HEAD
-_DEFAULT_RAW_ADVAN_FILE = "../data/raw/mobility/advan/all_advan_fix.csv"
-_DEFAULT_RAW_ADVAN_PLUS_FILE = "/Users/hwunrow/Documents/GitHub/cgnn/data/raw/advan_plus/all_advan_plus.csv"
-=======
-_DEFAULT_RAW_ADVAN_FILE = (
-    "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan/all_advan_fix.csv"
-)
->>>>>>> dab5e51 (Use full filepaths)
-=======
 _DEFAULT_RAW_ADVAN_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan/all_advan_filter_shared_pois.csv"
->>>>>>> Stashed changes
+_DEFAULT_RAW_ADVAN_PLUS_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan_plus/all_advan_plus.csv"
 _DEFAULT_MAX_MISSING_WEEKS = 21
 
 
@@ -59,6 +49,27 @@ def _get_config_value(cfg, key, default):
     if cfg is None:
         return default
     return cfg.get(key, default)
+
+
+def _resolve_data_cfg(cfg):
+    """
+    Resolve the config node that contains data-related keys.
+
+    New configs store `start_date`, `end_date`, file paths, `data_source`,
+    `mobility_source`, etc. at the root level (no `data:` block). Older configs
+    may wrap these keys under `data:`.
+
+    This helper returns `cfg["data"]` if present, otherwise returns `cfg`.
+    It intentionally avoids `cfg.data` attribute access.
+    """
+    if cfg is None:
+        return None
+    try:
+        nested = cfg.get("data", None)
+        return nested if nested is not None else cfg
+    except Exception:
+        # Fallback for non-dict-like config objects
+        return cfg
 
 
 def create_torch_geometric_data(
@@ -85,8 +96,8 @@ def create_torch_geometric_data(
         cfg (DictConfig, optional): Hydra config object. If None, uses default values.
     """
     # Get config values or use defaults
-    if cfg is not None and hasattr(cfg, "data"):
-        data_cfg = cfg.data
+    if cfg is not None:
+        data_cfg = cfg
         start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
         end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
         data_source = _get_config_value(data_cfg, "data_source", data_source).lower()
@@ -195,10 +206,8 @@ def create_torch_geometric_data(
     edge_weight_tensor = torch.tensor(edge_weights, dtype=torch.float32)
 
     # Get HOSP_COL from config or default
-    if cfg is not None and hasattr(cfg, "data"):
-        hosp_col = _get_config_value(cfg.data, "hosp_col", _DEFAULT_HOSP_COL)
-    else:
-        hosp_col = _DEFAULT_HOSP_COL
+    data_cfg = _resolve_data_cfg(cfg)
+    hosp_col = _get_config_value(data_cfg, "hosp_col", _DEFAULT_HOSP_COL)
 
     if data_source == "hospital":
         x_t = hosp_df
@@ -313,12 +322,9 @@ def create_node_key(cbsa_list=None, cfg=None):
     Returns:
         dict: A dictionary mapping node keys to vertex indices.
     """
-    if cfg is not None and hasattr(cfg, "data"):
-        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
-        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
-    else:
-        start_date = _DEFAULT_START_DATE
-        end_date = _DEFAULT_END_DATE
+    data_cfg = _resolve_data_cfg(cfg)
+    start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
+    end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
     dates = get_date_range(start_date, end_date)
     if cbsa_list is None:
         cbsa_list = get_cbsa_list()
@@ -351,12 +357,8 @@ def create_train_test_mask(node_dict, dates, fips_list, cfg=None):
             Each list has the same length as the number of nodes,
             with 1s indicating inclusion, and 0s indicating exclusion.
     """
-    if cfg is not None and hasattr(cfg, "data"):
-        train_split_idx = _get_config_value(
-            cfg.data, "train_split_idx", _DEFAULT_TRAIN_SPLIT_IDX
-        )
-    else:
-        train_split_idx = _DEFAULT_TRAIN_SPLIT_IDX
+    data_cfg = _resolve_data_cfg(cfg)
+    train_split_idx = _get_config_value(data_cfg, "train_split_idx", _DEFAULT_TRAIN_SPLIT_IDX)
 
     train_mask = [0 for _ in range(len(node_dict))]
     test_mask = [0 for _ in range(len(node_dict))]
@@ -380,20 +382,13 @@ def get_advan_plus_mobility_data(cbsa_list=None, cfg=None):
         cbsa_list = get_cbsa_list()
 
     # Get config values or defaults
-    if cfg is not None and hasattr(cfg, "data"):
-        raw_advan_plus_file = _get_config_value(
-            cfg.data, "raw_advan_plus_file", _DEFAULT_RAW_ADVAN_PLUS_FILE
-        )
-        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
-        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
-        mobility_cutoff = _get_config_value(
-            cfg.data, "mobility_cutoff", _DEFAULT_MOBILITY_CUTOFF
-        )
-    else:
-        raw_advan_plus_file = _DEFAULT_RAW_ADVAN_PLUS_FILE
-        start_date = _DEFAULT_START_DATE
-        end_date = _DEFAULT_END_DATE
-        mobility_cutoff = _DEFAULT_MOBILITY_CUTOFF
+    data_cfg = _resolve_data_cfg(cfg)
+    raw_advan_plus_file = _get_config_value(
+        data_cfg, "raw_advan_plus_file", _DEFAULT_RAW_ADVAN_PLUS_FILE
+    )
+    start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
+    end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
+    mobility_cutoff = _get_config_value(data_cfg, "mobility_cutoff", _DEFAULT_MOBILITY_CUTOFF)
 
     mobility_df = pd.read_csv(
         raw_advan_plus_file, dtype={"cbsa_orig": str, "cbsa_dest": str}
@@ -427,20 +422,11 @@ def get_advan_mobility_data(cbsa_list=None, cfg=None):
         cbsa_list = get_cbsa_list()
 
     # Get config values or defaults
-    if cfg is not None and hasattr(cfg, "data"):
-        raw_advan_file = _get_config_value(
-            cfg.data, "raw_advan_file", _DEFAULT_RAW_ADVAN_FILE
-        )
-        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
-        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
-        mobility_cutoff = _get_config_value(
-            cfg.data, "mobility_cutoff", _DEFAULT_MOBILITY_CUTOFF
-        )
-    else:
-        raw_advan_file = _DEFAULT_RAW_ADVAN_FILE
-        start_date = _DEFAULT_START_DATE
-        end_date = _DEFAULT_END_DATE
-        mobility_cutoff = _DEFAULT_MOBILITY_CUTOFF
+    data_cfg = _resolve_data_cfg(cfg)
+    raw_advan_file = _get_config_value(data_cfg, "raw_advan_file", _DEFAULT_RAW_ADVAN_FILE)
+    start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
+    end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
+    mobility_cutoff = _get_config_value(data_cfg, "mobility_cutoff", _DEFAULT_MOBILITY_CUTOFF)
 
     mobility_df = pd.read_csv(
         raw_advan_file, dtype={"cbsa_orig": str, "cbsa_dest": str}
@@ -474,20 +460,15 @@ def get_safegraph_mobility_data(cbsa_list=None, cfg=None):
         cbsa_list = get_cbsa_list()
 
     # Get config values or defaults
-    if cfg is not None and hasattr(cfg, "data"):
-        raw_safegraph_file = _get_config_value(
-            cfg.data, "raw_safegraph_file", _DEFAULT_RAW_SAFEGRAPH_FILE
-        )
-        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
-        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
-        safegraph_mobility_cutoff = _get_config_value(
-            cfg.data, "mobility_cutoff", _DEFAULT_MOBILITY_CUTOFF
-        )
-    else:
-        raw_safegraph_file = _DEFAULT_RAW_SAFEGRAPH_FILE
-        start_date = _DEFAULT_START_DATE
-        end_date = _DEFAULT_END_DATE
-        safegraph_mobility_cutoff = _DEFAULT_MOBILITY_CUTOFF
+    data_cfg = _resolve_data_cfg(cfg)
+    raw_safegraph_file = _get_config_value(
+        data_cfg, "raw_safegraph_file", _DEFAULT_RAW_SAFEGRAPH_FILE
+    )
+    start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
+    end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
+    safegraph_mobility_cutoff = _get_config_value(
+        data_cfg, "mobility_cutoff", _DEFAULT_MOBILITY_CUTOFF
+    )
 
     mobility_df = pd.read_csv(
         raw_safegraph_file, dtype={"cbsa_orig": str, "cbsa_dest": str}
@@ -549,12 +530,10 @@ def create_edge_index(
         mobility_df = get_mobility_df_by_source(mobility_source, cbsa_list, cfg=cfg)
 
     # Get temporal edge window size from config
-    if cfg is not None and hasattr(cfg, "data"):
-        temporal_edge_window_size = _get_config_value(
-            cfg.data, "temporal_edge_window_size", _DEFAULT_TEMPORAL_EDGE_WINDOW_SIZE
-        )
-    else:
-        temporal_edge_window_size = _DEFAULT_TEMPORAL_EDGE_WINDOW_SIZE
+    data_cfg = _resolve_data_cfg(cfg)
+    temporal_edge_window_size = _get_config_value(
+        data_cfg, "temporal_edge_window_size", _DEFAULT_TEMPORAL_EDGE_WINDOW_SIZE
+    )
 
     print("Creating spatial edges...")
     for index, row in tqdm(
@@ -632,18 +611,13 @@ def process_mobility_report(cbsa_list=None, cfg=None):
         pandas.DataFrame: Columns include FIPS code, date, and mobility indicators.
     """
     # Get config values or defaults
-    if cfg is not None and hasattr(cfg, "data"):
-        raw_mobility_report_dir = _get_config_value(
-            cfg.data, "raw_mobility_report_dir", _DEFAULT_RAW_MOBILITY_REPORT_DIR
-        )
-        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
-        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
-        pop_url = _get_config_value(cfg.data, "pop_url", _DEFAULT_POP_URL)
-    else:
-        raw_mobility_report_dir = _DEFAULT_RAW_MOBILITY_REPORT_DIR
-        start_date = _DEFAULT_START_DATE
-        end_date = _DEFAULT_END_DATE
-        pop_url = _DEFAULT_POP_URL
+    data_cfg = _resolve_data_cfg(cfg)
+    raw_mobility_report_dir = _get_config_value(
+        data_cfg, "raw_mobility_report_dir", _DEFAULT_RAW_MOBILITY_REPORT_DIR
+    )
+    start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
+    end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
+    pop_url = _get_config_value(data_cfg, "pop_url", _DEFAULT_POP_URL)
 
     DTYPE = {
         "census_fips_code": "str",
@@ -1002,21 +976,14 @@ def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21, cfg=None)
         cfg (DictConfig, optional): Hydra config object.
     """
     # Get config values or defaults
-    if cfg is not None and hasattr(cfg, "data"):
-        raw_hospitalization_file = _get_config_value(
-            cfg.data, "raw_hospitalization_file", _DEFAULT_RAW_HOSPITALZATION_FILE
-        )
-        hosp_col = _get_config_value(cfg.data, "hosp_col", _DEFAULT_HOSP_COL)
-        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
-        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
-        max_missing_weeks = _get_config_value(
-            cfg.data, "max_missing_weeks", max_missing_weeks
-        )
-    else:
-        raw_hospitalization_file = _DEFAULT_RAW_HOSPITALZATION_FILE
-        hosp_col = _DEFAULT_HOSP_COL
-        start_date = _DEFAULT_START_DATE
-        end_date = _DEFAULT_END_DATE
+    data_cfg = _resolve_data_cfg(cfg)
+    raw_hospitalization_file = _get_config_value(
+        data_cfg, "raw_hospitalization_file", _DEFAULT_RAW_HOSPITALZATION_FILE
+    )
+    hosp_col = _get_config_value(data_cfg, "hosp_col", _DEFAULT_HOSP_COL)
+    start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
+    end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
+    max_missing_weeks = _get_config_value(data_cfg, "max_missing_weeks", max_missing_weeks)
 
     hosp_df = pd.read_csv(raw_hospitalization_file, dtype={"fips_code": str})
 
@@ -1150,20 +1117,11 @@ def process_case_death_data(cbsa_list=None, cfg=None):
         It also computes previous case counts for each day within the time window.
     """
     # Get config values or defaults
-    if cfg is not None and hasattr(cfg, "data"):
-        raw_death_url = _get_config_value(
-            cfg.data, "raw_death_url", _DEFAULT_RAW_DEATH_URL
-        )
-        start_date = _get_config_value(cfg.data, "start_date", _DEFAULT_START_DATE)
-        end_date = _get_config_value(cfg.data, "end_date", _DEFAULT_END_DATE)
-        time_window_size = _get_config_value(
-            cfg.data, "time_window_size", _DEFAULT_TIME_WINDOW_SIZE
-        )
-    else:
-        raw_death_url = _DEFAULT_RAW_DEATH_URL
-        start_date = _DEFAULT_START_DATE
-        end_date = _DEFAULT_END_DATE
-        time_window_size = _DEFAULT_TIME_WINDOW_SIZE
+    data_cfg = _resolve_data_cfg(cfg)
+    raw_death_url = _get_config_value(data_cfg, "raw_death_url", _DEFAULT_RAW_DEATH_URL)
+    start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
+    end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
+    time_window_size = _get_config_value(data_cfg, "time_window_size", _DEFAULT_TIME_WINDOW_SIZE)
 
     death_df = pd.read_csv(raw_death_url, dtype={"UID": str})
     # case_df = pd.read_csv(RAW_CASE_URL, dtype={"UID": str})
