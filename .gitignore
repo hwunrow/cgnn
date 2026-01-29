@@ -6,6 +6,8 @@ __pycache__/
 .vscode/*
 .virtual_documents/* 
 src/.virtual_documents/*
+deconvolution_matlab/
+outputs/
 
 # C extensions
 *.so
