@@ -48,9 +48,12 @@ def _resolve_data_cfg(cfg):
     return data_cfg
 
 
-class HospitalizationAdvanPlusDatasetLoader:
+class ConfigurableDatasetLoader:
     """
     Configurable dataloader that creates a `DynamicGraphTemporalSignal`.
+    
+    Target (e.g. hospitalization vs case) and mobility source (e.g. Advan, Advan Plus,
+    SafeGraph) are determined by config (data_source, mobility_source).
     
     Creates a DynamicGraphTemporalSignal where:
     - **Node features**: determined by `data_source` and `feature_cols`.
@@ -71,11 +74,11 @@ class HospitalizationAdvanPlusDatasetLoader:
     - **Edge weights**: `visitor_home_aggregation` from the chosen mobility data
     
     Example:
-        >>> from cgnn.dataloader import HospitalizationAdvanPlusDatasetLoader
+        >>> from cgnn.dataloader import ConfigurableDatasetLoader
         >>> from torch_geometric_temporal.signal import temporal_signal_split
         >>> 
         >>> # Initialize loader with 3 historical features (total 4 features per node)
-        >>> loader = HospitalizationAdvanPlusDatasetLoader(
+        >>> loader = ConfigurableDatasetLoader(
         ...     cbsa_list=None, 
         ...     cfg=None,
         ...     num_historical_features=3
@@ -481,5 +484,5 @@ class HospitalizationAdvanPlusDatasetLoader:
         )
 
 
-# Friendlier alias (keeps backwards compatibility with older notebooks/code).
-ConfigurableDatasetLoader = HospitalizationAdvanPlusDatasetLoader
+# Backwards compatibility alias.
+HospitalizationAdvanPlusDatasetLoader = ConfigurableDatasetLoader
