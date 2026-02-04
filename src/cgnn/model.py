@@ -4,6 +4,7 @@ from torch import nn
 from torch_geometric.nn import GCNConv
 
 # from torch_geometric_temporal.nn.recurrent.attentiontemporalgcn import A3TGCN
+from torch_geometric_temporal.nn.recurrent import DCRNN
 
 import pandas as pd
 from cgnn import process_data
@@ -30,11 +31,10 @@ class RMSLELoss(torch.nn.Module):
         self.mse = torch.nn.MSELoss()
 
     def forward(self, pred, actual):
-        rmsle = torch.sqrt(self.mse(torch.log(pred + 1), torch.log(actual + 1)))
-        if torch.isnan(rmsle):
-            import pdb
-
-            pdb.set_trace()
+        # Clamp so log(pred+1) and log(actual+1) are defined (avoid NaN from negative/zero)
+        pred = pred.clamp(min=0.0)
+        actual = actual.clamp(min=0.0)
+        rmsle = torch.sqrt(self.mse(torch.log1p(pred), torch.log1p(actual)))
         return rmsle
 
 
@@ -108,6 +108,20 @@ class GCN(nn.Module):
         out = h.relu()
 
         return out
+
+
+class CDCRNN(torch.nn.Module):
+    def __init__(self, node_features):
+        super(CDCRNN, self).__init__()
+        self.recurrent = DCRNN(node_features, 16, 2)
+        self.linear = torch.nn.Linear(16, 1)
+
+    def forward(self, x, edge_index, edge_weight, h=None):
+        h = self.recurrent(x, edge_index, edge_weight, h)
+        out = F.relu(h)
+        out = self.linear(out)
+        
+        return out, h
 
 
 class prevCase(nn.Module):

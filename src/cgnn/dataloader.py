@@ -64,6 +64,12 @@ class ConfigurableDatasetLoader:
         the current date block with the previous K date blocks (most recent to oldest).
         When historical dates don't exist (at start of date range), the earliest
         available value is repeated.
+      - If `feature_transform="diff"`, each block is replaced by its first difference
+        (x_t - x_{t-1}), which can help avoid the model converging to a persistence
+        predictor (y_{t+1} = y_t). Note: with diff, ``snapshot.x`` no longer contains
+        levels; training code that uses ``snapshot.x`` as current levels (e.g. to form
+        delta targets) must be updated (e.g. predict next-step level and use MSE, or
+        pass current levels separately).
     - **Targets**:
       - `data_source="hospital"`: next time step of `hosp_col`
       - `data_source="case"`: next time step of `CASE_COUNT_7DAY_AVG` (or `CASE_DELTA`
@@ -109,6 +115,7 @@ class ConfigurableDatasetLoader:
         xy_transform="log1p",
         predict_delta=False,
         num_historical_features=0,
+        feature_transform="none",
     ):
         """
         Initialize the dataloader.
@@ -119,6 +126,9 @@ class ConfigurableDatasetLoader:
             num_historical_features (int, optional): Number of previous dates to include as features.
                 Default is 0 (only current date). If K > 0, features will have shape [num_nodes, K+1]
                 where column 0 is current date and columns 1..K are previous dates (most recent to oldest).
+            feature_transform (str, optional): How to transform node features. "none" (default) uses
+                raw values. "diff" uses first differences (x_t - x_{t-1}) per feature, which can help
+                avoid the model collapsing to a persistence predictor (y_{t+1} = y_t).
         """
         self.cbsa_list = cbsa_list
         self.cfg = cfg
@@ -129,6 +139,12 @@ class ConfigurableDatasetLoader:
         self.xy_transform = xy_transform
         self.predict_delta = predict_delta
         self.num_historical_features = num_historical_features
+        self.feature_transform = str(feature_transform).lower() if feature_transform else "none"
+        if self.feature_transform not in ("none", "diff"):
+            raise ValueError(
+                f"Unsupported feature_transform='{self.feature_transform}'. "
+                "Expected 'none' or 'diff'."
+            )
 
         # Get config values or defaults
         data_cfg = _resolve_data_cfg(cfg)
@@ -401,6 +417,10 @@ class ConfigurableDatasetLoader:
             targets = np.array([next_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32)
 
         # Features: concatenate current + K previous blocks (each block has len(feature_cols) features)
+        # When feature_transform=="diff", we need one extra prior block to compute first differences.
+        num_blocks = self.num_historical_features + 1
+        if self.feature_transform == "diff":
+            num_blocks += 1  # extra block for (t - (K+1)) to diff the last historical block
         blocks = []
         earliest_date = self.dates[0]
         earliest_date_str = pd.to_datetime(earliest_date).strftime("%Y-%m-%d")
@@ -408,7 +428,7 @@ class ConfigurableDatasetLoader:
             self.data_df[self.date_col].dt.strftime("%Y-%m-%d") == earliest_date_str
         ]
 
-        for k in range(0, self.num_historical_features + 1):
+        for k in range(0, num_blocks):
             hist_idx = date_idx - k
             if hist_idx >= 0:
                 hist_date = self.dates[hist_idx]
@@ -428,6 +448,17 @@ class ConfigurableDatasetLoader:
                 dtype=np.float32,
             )
             blocks.append(block)
+
+        if self.feature_transform == "diff":
+            # Replace each block by first difference: block_k becomes (block_k - block_{k+1}).
+            # When no prior exists, use zeros (so first difference is zero at the boundary).
+            num_output_blocks = self.num_historical_features + 1
+            diff_blocks = []
+            for k in range(num_output_blocks):
+                curr_block = blocks[k]
+                prev_block = blocks[k + 1]  # we built one extra block
+                diff_blocks.append(curr_block - prev_block)
+            blocks = diff_blocks
 
         # blocks are [current, prev1, prev2, ...] (increasing k)
         features = np.concatenate(blocks, axis=1)  # [num_nodes, (K+1)*num_features]

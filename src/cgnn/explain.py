@@ -1,5 +1,6 @@
 from datetime import datetime
 import torch
+from torch.optim import Adam
 from torch_geometric.utils import subgraph
 from torch_geometric.explain import Explainer, GNNExplainer
 from omegaconf import DictConfig
@@ -7,6 +8,83 @@ from omegaconf import DictConfig
 # Default values
 _DEFAULT_EXPLAINER_EPOCHS = 200
 _DEFAULT_EDGE_MASK_THRESHOLD = 0.5
+
+
+class DCRNNExplainer:
+    """
+    Explains a single temporal snapshot prediction by learning an edge mask.
+    Used with CDCRNN (temporal) models; one snapshot at a time.
+    """
+
+    def __init__(self, model, device):
+        self.model = model
+        self.device = device
+        self.model.eval()
+
+    def explain(
+        self,
+        x,
+        edge_index,
+        edge_weight=None,
+        epochs=500,
+        lr=0.01,
+        verbose=False,
+    ):
+        """
+        Learn an edge importance mask for one snapshot.
+
+        Args:
+            x: Node features (num_nodes, num_features).
+            edge_index: Graph connectivity (2, num_edges).
+            edge_weight: Edge weights (num_edges,). Optional.
+            epochs: Number of optimization steps for the mask.
+            lr: Learning rate for mask logits.
+            verbose: If True, print loss components at end.
+
+        Returns:
+            Tensor of shape (num_edges,) with values in [0, 1] (edge mask).
+        """
+        num_edges = edge_index.shape[1]
+        x = x.to(self.device)
+        edge_index = edge_index.to(self.device)
+
+        mask_logits = torch.randn(
+            num_edges, requires_grad=True, device=self.device
+        )
+        if edge_weight is None:
+            base_weights = torch.ones(num_edges, device=self.device)
+        else:
+            base_weights = edge_weight.to(self.device)
+
+        optimizer = Adam([mask_logits], lr=lr)
+
+        with torch.no_grad():
+            base_pred, _ = self.model(x, edge_index, base_weights)
+            base_pred = torch.expm1(base_pred)
+
+        for _ in range(epochs):
+            optimizer.zero_grad()
+            mask = torch.sigmoid(mask_logits)
+            masked_weights = base_weights * mask
+            masked_pred, _ = self.model(x, edge_index, masked_weights)
+            masked_pred = torch.expm1(masked_pred)
+
+            loss_dist = torch.mean((masked_pred - base_pred) ** 2)
+            loss_size = 0.000005 * mask.sum()
+            ent = -mask * torch.log(mask + 1e-15) - (1 - mask) * torch.log(
+                1 - mask + 1e-15
+            )
+            loss_ent = 0.1 * ent.mean()
+            loss = loss_dist + loss_size + loss_ent
+            loss.backward()
+            optimizer.step()
+
+        if verbose:
+            print(
+                f"  explain loss_dist={loss_dist.item():.6f} "
+                f"loss_size={loss_size.item():.6f} loss_ent={loss_ent.item():.6f}"
+            )
+        return torch.sigmoid(mask_logits).detach()
 
 
 def _get_config_value(cfg, key, default):
