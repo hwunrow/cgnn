@@ -127,8 +127,9 @@ class ConfigurableDatasetLoader:
                 Default is 0 (only current date). If K > 0, features will have shape [num_nodes, K+1]
                 where column 0 is current date and columns 1..K are previous dates (most recent to oldest).
             feature_transform (str, optional): How to transform node features. "none" (default) uses
-                raw values. "diff" uses first differences (x_t - x_{t-1}) per feature, which can help
-                avoid the model collapsing to a persistence predictor (y_{t+1} = y_t).
+                raw values. "diff" uses first differences (x_t - x_{t-1}) per feature. "log_diff" applies
+                log1p before differencing: log(x_t + 1) - log(x_{t-1} + 1), which compresses large values
+                and represents percentage change. Uses signed log to handle negatives.
         """
         self.cbsa_list = cbsa_list
         self.cfg = cfg
@@ -140,10 +141,10 @@ class ConfigurableDatasetLoader:
         self.predict_delta = predict_delta
         self.num_historical_features = num_historical_features
         self.feature_transform = str(feature_transform).lower() if feature_transform else "none"
-        if self.feature_transform not in ("none", "diff"):
+        if self.feature_transform not in ("none", "diff", "log_diff"):
             raise ValueError(
                 f"Unsupported feature_transform='{self.feature_transform}'. "
-                "Expected 'none' or 'diff'."
+                "Expected 'none', 'diff', or 'log_diff'."
             )
 
         # Get config values or defaults
@@ -417,9 +418,9 @@ class ConfigurableDatasetLoader:
             targets = np.array([next_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32)
 
         # Features: concatenate current + K previous blocks (each block has len(feature_cols) features)
-        # When feature_transform=="diff", we need one extra prior block to compute first differences.
+        # When feature_transform=="diff" or "log_diff", we need one extra prior block to compute first differences.
         num_blocks = self.num_historical_features + 1
-        if self.feature_transform == "diff":
+        if self.feature_transform in ("diff", "log_diff"):
             num_blocks += 1  # extra block for (t - (K+1)) to diff the last historical block
         blocks = []
         earliest_date = self.dates[0]
@@ -458,6 +459,20 @@ class ConfigurableDatasetLoader:
                 curr_block = blocks[k]
                 prev_block = blocks[k + 1]  # we built one extra block
                 diff_blocks.append(curr_block - prev_block)
+            blocks = diff_blocks
+        elif self.feature_transform == "log_diff":
+            # Apply log1p BEFORE differencing: log(x_t + 1) - log(x_{t-1} + 1)
+            # This represents percentage change and compresses large values.
+            # Use signed log to handle negative values: sign(x) * log1p(|x|)
+            num_output_blocks = self.num_historical_features + 1
+            diff_blocks = []
+            for k in range(num_output_blocks):
+                curr_block = blocks[k]
+                prev_block = blocks[k + 1]  # we built one extra block
+                # Signed log1p: preserves sign, applies log1p to absolute value
+                curr_log = np.sign(curr_block) * np.log1p(np.abs(curr_block))
+                prev_log = np.sign(prev_block) * np.log1p(np.abs(prev_block))
+                diff_blocks.append(curr_log - prev_log)
             blocks = diff_blocks
 
         # blocks are [current, prev1, prev2, ...] (increasing k)
