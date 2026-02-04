@@ -407,13 +407,20 @@ class ConfigurableDatasetLoader:
 
         # Targets (next time step)
         next_target_dict = dict(zip(next_df["CBSA"], next_df[self.target_col]))
-        if self.predict_delta and self.data_source == "hospital":
-            # For hospital, delta target means next - current for the hospital column.
+        if self.predict_delta:
+            # Delta target: next - current (or log difference if using log_diff)
             curr_target_dict = dict(zip(curr_df["CBSA"], curr_df[self.target_col]))
-            targets = np.array(
-                [next_target_dict.get(cbsa, 0.0) - curr_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list],
-                dtype=np.float32,
-            )
+            next_vals = np.array([next_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32)
+            curr_vals = np.array([curr_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32)
+
+            if self.feature_transform == "log_diff":
+                # Log difference: sign(next)*log1p(|next|) - sign(curr)*log1p(|curr|)
+                next_log = np.sign(next_vals) * np.log1p(np.abs(next_vals))
+                curr_log = np.sign(curr_vals) * np.log1p(np.abs(curr_vals))
+                targets = next_log - curr_log
+            else:
+                # Raw difference
+                targets = next_vals - curr_vals
         else:
             targets = np.array([next_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32)
 
