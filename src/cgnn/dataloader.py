@@ -64,17 +64,16 @@ class ConfigurableDatasetLoader:
         the current date block with the previous K date blocks (most recent to oldest).
         When historical dates don't exist (at start of date range), the earliest
         available value is repeated.
-      - If `feature_transform="diff"`, each block is replaced by its first difference
-        (x_t - x_{t-1}), which can help avoid the model converging to a persistence
-        predictor (y_{t+1} = y_t). Note: with diff, ``snapshot.x`` no longer contains
-        levels; training code that uses ``snapshot.x`` as current levels (e.g. to form
-        delta targets) must be updated (e.g. predict next-step level and use MSE, or
-        pass current levels separately).
+      - Transform applied to features is controlled by ``x_transform`` (none, diff, log1p, log_diff).
+        With diff or log_diff, each block is replaced by first (log-)difference; snapshot.x then
+        no longer contains levels.
     - **Targets**:
       - `data_source="hospital"`: next time step of `hosp_col`
-      - `data_source="case"`: next time step of `CASE_COUNT_7DAY_AVG` (or `CASE_DELTA`
-        if `predict_delta=True`)
+      - `data_source="case"`: next time step of `CASE_COUNT_7DAY_AVG
       - Can be overridden via config `target_col`
+      - If `target_horizon=k` (default 1), targets are for t+1, t+2, ..., t+k. Then
+        `snapshot.y` has shape `[num_nodes, k]`; with `target_horizon=1` it remains
+        `[num_nodes]` for backward compatibility.
     - **Edges**: spatial edges between CBSAs based on `mobility_source`
       (`advan`, `advan_plus`, or `safegraph`)
     - **Edge weights**: `visitor_home_aggregation` from the chosen mobility data
@@ -83,11 +82,10 @@ class ConfigurableDatasetLoader:
         >>> from cgnn.dataloader import ConfigurableDatasetLoader
         >>> from torch_geometric_temporal.signal import temporal_signal_split
         >>> 
-        >>> # Initialize loader with 3 historical features (total 4 features per node)
+        >>> # Initialize loader (parameters read from cfg)
         >>> loader = ConfigurableDatasetLoader(
         ...     cbsa_list=None, 
-        ...     cfg=None,
-        ...     num_historical_features=3
+        ...     cfg=cfg,
         ... )
         >>> 
         >>> # Get dataset
@@ -101,54 +99,60 @@ class ConfigurableDatasetLoader:
         >>>     print(snapshot.x.shape)  # [num_nodes, 4] (current + 3 historical)
         >>>     print(snapshot.edge_index.shape)  # [2, num_edges]
         >>>     print(snapshot.edge_attr.shape)  # [num_edges]
-        >>>     print(snapshot.y.shape)  # [num_nodes]
+        >>>     print(snapshot.y.shape)  # [num_nodes] or [num_nodes, target_horizon]
     """
     
     def __init__(
         self,
         cbsa_list=None,
         cfg=None,
-        normalize_edge_weights=True,
-        edge_weight_transform="log1p",
-        edge_weight_normalization="row_sum",
-        transform_xy=False,
-        xy_transform="log1p",
-        predict_delta=False,
-        num_historical_features=0,
-        feature_transform="none",
     ):
         """
         Initialize the dataloader.
-        
+
         Args:
             cbsa_list (list, optional): List of CBSA codes to include. If None, uses all available.
             cfg (DictConfig, optional): Hydra config object for configuration.
-            num_historical_features (int, optional): Number of previous dates to include as features.
-                Default is 0 (only current date). If K > 0, features will have shape [num_nodes, K+1]
-                where column 0 is current date and columns 1..K are previous dates (most recent to oldest).
-            feature_transform (str, optional): How to transform node features. "none" (default) uses
-                raw values. "diff" uses first differences (x_t - x_{t-1}) per feature. "log_diff" applies
-                log1p before differencing: log(x_t + 1) - log(x_{t-1} + 1), which compresses large values
-                and represents percentage change. Uses signed log to handle negatives.
+                Transformation and edge parameters read from config:
+                - x_transform (str, default: "none"): feature space; one of "none", "diff", "log1p", "log_diff"
+                - y_transform (str, default: "none"): target space; one of "none", "diff", "log1p", "log_diff"
+                - normalize_edge_weights (bool, default: True)
+                - edge_weight_transform (str, default: "log1p")
+                - edge_weight_normalization (str, default: "row_sum")
+                - num_historical_features (int, default: 0)
+                - target_horizon (int, default: 1)
+                predict_delta is derived from y_transform (True when y_transform in ("diff", "log_diff")).
         """
         self.cbsa_list = cbsa_list
         self.cfg = cfg
-        self.normalize_edge_weights = normalize_edge_weights
-        self.edge_weight_transform = edge_weight_transform
-        self.edge_weight_normalization = edge_weight_normalization
-        self.transform_xy = transform_xy
-        self.xy_transform = xy_transform
-        self.predict_delta = predict_delta
-        self.num_historical_features = num_historical_features
-        self.feature_transform = str(feature_transform).lower() if feature_transform else "none"
-        if self.feature_transform not in ("none", "diff", "log_diff"):
-            raise ValueError(
-                f"Unsupported feature_transform='{self.feature_transform}'. "
-                "Expected 'none', 'diff', or 'log_diff'."
-            )
 
         # Get config values or defaults
         data_cfg = _resolve_data_cfg(cfg)
+        
+        # Read transformation and target parameters from config
+        self.normalize_edge_weights = _get_config_value(data_cfg, "normalize_edge_weights", True)
+        self.edge_weight_transform = _get_config_value(data_cfg, "edge_weight_transform", "log1p")
+        self.edge_weight_normalization = _get_config_value(data_cfg, "edge_weight_normalization", "row_sum")
+
+        # x_transform and y_transform (none | diff | log1p | log_diff)
+        _VALID_TRANSFORMS = ("none", "diff", "log1p", "log_diff")
+        x_raw = _get_config_value(data_cfg, "x_transform", "none")
+        y_raw = _get_config_value(data_cfg, "y_transform", "none")
+        self.x_transform = str(x_raw).lower() if x_raw else "none"
+        self.y_transform = str(y_raw).lower() if y_raw else "none"
+        if self.x_transform not in _VALID_TRANSFORMS:
+            raise ValueError(
+                f"Unsupported x_transform='{self.x_transform}'. "
+                "Expected 'none', 'diff', 'log1p', or 'log_diff'."
+            )
+        if self.y_transform not in _VALID_TRANSFORMS:
+            raise ValueError(
+                f"Unsupported y_transform='{self.y_transform}'. "
+                "Expected 'none', 'diff', 'log1p', or 'log_diff'."
+            )
+
+        self.num_historical_features = _get_config_value(data_cfg, "num_historical_features", 0)
+        self.num_historical_features = int(self.num_historical_features)
 
         self.start_date = _get_config_value(data_cfg, "start_date", _DEFAULT_START_DATE)
         self.end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
@@ -160,6 +164,12 @@ class ConfigurableDatasetLoader:
         self.mobility_source = _get_config_value(
             data_cfg, "mobility_source", "advan_plus"
         )
+        self.target_horizon = _get_config_value(
+            data_cfg, "target_horizon", 1
+        )
+        self.target_horizon = int(self.target_horizon)
+        if self.target_horizon < 1:
+            raise ValueError("target_horizon must be >= 1.")
 
         # Optional: explicit feature/target schema (useful for case/death configs)
         self.feature_cols = _get_config_value(data_cfg, "feature_cols", None)
@@ -179,6 +189,11 @@ class ConfigurableDatasetLoader:
         
         # Process data
         self._load_data()
+
+    @property
+    def predict_delta(self):
+        """True when y_transform is diff or log_diff (for CDCRNN and callers)."""
+        return self.y_transform in ("diff", "log_diff")
         
     def _load_data(self):
         """Load and process node data and mobility/edge data."""
@@ -227,7 +242,8 @@ class ConfigurableDatasetLoader:
                     "DEATH_COUNT_PREV_5",
                 ]
             if self.target_col is None:
-                self.target_col = "CASE_DELTA" if self.predict_delta else "CASE_COUNT_7DAY_AVG"
+                self.target_col = "CASE_COUNT_7DAY_AVG"
+                # self.target_col = "CASE_DELTA" if self.predict_delta else "CASE_COUNT_7DAY_AVG"
 
         print(f"Loading mobility data (source={self.mobility_source})...")
         self.mobility_df = get_mobility_df_by_source(
@@ -368,7 +384,8 @@ class ConfigurableDatasetLoader:
                 - features: numpy array of shape [num_nodes, num_features]
                   If num_historical_features=0: [num_nodes, 1] (current date only)
                   If num_historical_features=K: [num_nodes, K+1] (current + K previous dates)
-                - target: numpy array of shape [num_nodes]
+                - target: numpy array of shape [num_nodes] if target_horizon==1, else
+                  [num_nodes, target_horizon] for multi-horizon (t+1, t+2, ..., t+k).
         """
         date_str = pd.to_datetime(date).strftime("%Y-%m-%d")
         
@@ -389,45 +406,90 @@ class ConfigurableDatasetLoader:
             # Date not found - use get_indexer as fallback
             date_idx_array = self.dates.get_indexer([date_dt])
             date_idx = date_idx_array[0] if date_idx_array[0] >= 0 else len(self.dates) - 1
-        
-        if date_idx < len(self.dates) - 1:
-            next_date = self.dates[date_idx + 1]
-            next_date_str = pd.to_datetime(next_date).strftime("%Y-%m-%d")
-            next_df = self.data_df[
-                self.data_df[self.date_col].dt.strftime("%Y-%m-%d") == next_date_str
-            ]
-        else:
-            # Last date - use zeros for target
-            next_df = pd.DataFrame({"CBSA": self.cbsa_list, self.target_col: [0.0] * len(self.cbsa_list)})
 
         # Current date dataframe (for features, and for delta targets if requested)
         curr_df = self.data_df[
             self.data_df[self.date_col].dt.strftime("%Y-%m-%d") == date_str
         ]
+        curr_target_dict = dict(zip(curr_df["CBSA"], curr_df[self.target_col]))
+        curr_vals = np.array(
+            [curr_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32
+        )
 
-        # Targets (next time step)
-        next_target_dict = dict(zip(next_df["CBSA"], next_df[self.target_col]))
-        if self.predict_delta:
-            # Delta target: next - current (or log difference if using log_diff)
-            curr_target_dict = dict(zip(curr_df["CBSA"], curr_df[self.target_col]))
-            next_vals = np.array([next_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32)
-            curr_vals = np.array([curr_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32)
-
-            if self.feature_transform == "log_diff":
-                # Log difference: sign(next)*log1p(|next|) - sign(curr)*log1p(|curr|)
-                next_log = np.sign(next_vals) * np.log1p(np.abs(next_vals))
-                curr_log = np.sign(curr_vals) * np.log1p(np.abs(curr_vals))
-                targets = next_log - curr_log
+        # Build targets: first compute levels per horizon, then apply y_transform
+        level_arrays = []  # level at t+(h+1) for each h
+        for h in range(self.target_horizon):
+            future_idx = date_idx + 1 + h
+            if future_idx < len(self.dates):
+                future_date = self.dates[future_idx]
+                future_date_str = pd.to_datetime(future_date).strftime("%Y-%m-%d")
+                future_df = self.data_df[
+                    self.data_df[self.date_col].dt.strftime("%Y-%m-%d") == future_date_str
+                ]
+                future_target_dict = dict(zip(future_df["CBSA"], future_df[self.target_col]))
+                future_vals = np.array(
+                    [future_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list],
+                    dtype=np.float32,
+                )
             else:
-                # Raw difference
-                targets = next_vals - curr_vals
-        else:
-            targets = np.array([next_target_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32)
+                future_vals = np.zeros(len(self.cbsa_list), dtype=np.float32)
+            level_arrays.append(future_vals)
+
+        # Apply y_transform to get target array
+        if self.y_transform == "none":
+            horizon_targets = level_arrays
+        elif self.y_transform == "log1p":
+            if any((a < -1).any() for a in level_arrays):
+                raise ValueError(
+                    "Cannot apply log1p to targets with values less than -1. "
+                    "Use y_transform='none', 'diff', or 'log_diff'."
+                )
+            horizon_targets = [np.log1p(a) for a in level_arrays]
+        elif self.y_transform == "diff":
+            horizon_targets = []
+            for h in range(self.target_horizon):
+                prev_idx = date_idx + h
+                if prev_idx < len(self.dates):
+                    prev_date = self.dates[prev_idx]
+                    prev_date_str = pd.to_datetime(prev_date).strftime("%Y-%m-%d")
+                    prev_df = self.data_df[
+                        self.data_df[self.date_col].dt.strftime("%Y-%m-%d") == prev_date_str
+                    ]
+                    prev_dict = dict(zip(prev_df["CBSA"], prev_df[self.target_col]))
+                    prev_vals = np.array(
+                        [prev_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32
+                    )
+                else:
+                    prev_vals = np.zeros(len(self.cbsa_list), dtype=np.float32)
+                horizon_targets.append(level_arrays[h] - prev_vals)
+        else:  # log_diff
+            horizon_targets = []
+            for h in range(self.target_horizon):
+                prev_idx = date_idx + h
+                if prev_idx < len(self.dates):
+                    prev_date = self.dates[prev_idx]
+                    prev_date_str = pd.to_datetime(prev_date).strftime("%Y-%m-%d")
+                    prev_df = self.data_df[
+                        self.data_df[self.date_col].dt.strftime("%Y-%m-%d") == prev_date_str
+                    ]
+                    prev_dict = dict(zip(prev_df["CBSA"], prev_df[self.target_col]))
+                    prev_vals = np.array(
+                        [prev_dict.get(cbsa, 0.0) for cbsa in self.cbsa_list], dtype=np.float32
+                    )
+                else:
+                    prev_vals = np.zeros(len(self.cbsa_list), dtype=np.float32)
+                horizon_targets.append(
+                    np.log1p(np.abs(level_arrays[h])) - np.log1p(np.abs(prev_vals))
+                )
+
+        targets = np.stack(horizon_targets, axis=1).astype(np.float32)  # [num_nodes, target_horizon]
+        if self.target_horizon == 1:
+            targets = targets.squeeze(axis=1)  # [num_nodes] for backward compatibility
 
         # Features: concatenate current + K previous blocks (each block has len(feature_cols) features)
-        # When feature_transform=="diff" or "log_diff", we need one extra prior block to compute first differences.
+        # When x_transform is diff or log_diff, we need one extra prior block to compute first differences.
         num_blocks = self.num_historical_features + 1
-        if self.feature_transform in ("diff", "log_diff"):
+        if self.x_transform in ("diff", "log_diff"):
             num_blocks += 1  # extra block for (t - (K+1)) to diff the last historical block
         blocks = []
         earliest_date = self.dates[0]
@@ -457,9 +519,8 @@ class ConfigurableDatasetLoader:
             )
             blocks.append(block)
 
-        if self.feature_transform == "diff":
+        if self.x_transform == "diff":
             # Replace each block by first difference: block_k becomes (block_k - block_{k+1}).
-            # When no prior exists, use zeros (so first difference is zero at the boundary).
             num_output_blocks = self.num_historical_features + 1
             diff_blocks = []
             for k in range(num_output_blocks):
@@ -467,38 +528,29 @@ class ConfigurableDatasetLoader:
                 prev_block = blocks[k + 1]  # we built one extra block
                 diff_blocks.append(curr_block - prev_block)
             blocks = diff_blocks
-        elif self.feature_transform == "log_diff":
-            # Apply log1p BEFORE differencing: log(x_t + 1) - log(x_{t-1} + 1)
-            # This represents percentage change and compresses large values.
-            # Use signed log to handle negative values: sign(x) * log1p(|x|)
+        elif self.x_transform == "log_diff":
+            # Apply log1p before differencing: log(x_t + 1) - log(x_{t-1} + 1)
             num_output_blocks = self.num_historical_features + 1
             diff_blocks = []
             for k in range(num_output_blocks):
                 curr_block = blocks[k]
-                prev_block = blocks[k + 1]  # we built one extra block
-                # Signed log1p: preserves sign, applies log1p to absolute value
-                curr_log = np.sign(curr_block) * np.log1p(np.abs(curr_block))
-                prev_log = np.sign(prev_block) * np.log1p(np.abs(prev_block))
+                prev_block = blocks[k + 1]
+                curr_log = np.log1p(np.abs(curr_block))
+                prev_log = np.log1p(np.abs(prev_block))
                 diff_blocks.append(curr_log - prev_log)
             blocks = diff_blocks
 
         # blocks are [current, prev1, prev2, ...] (increasing k)
         features = np.concatenate(blocks, axis=1)  # [num_nodes, (K+1)*num_features]
 
-        if self.transform_xy:
-            if self.xy_transform == "log1p":
-                if (features < 0).any() or (targets < 0).any():
-                    raise ValueError(
-                        "Cannot apply log1p transform with negative feature/target values. "
-                        "Disable transform_xy or use a different transform."
-                    )
-                features = np.log1p(features)
-                targets = np.log1p(targets)
-            elif self.xy_transform in (None, "none"):
-                pass
-            else:
-                raise ValueError(f"Unsupported xy_transform='{self.xy_transform}'")
-        
+        if self.x_transform == "log1p":
+            if (features < 0).any():
+                raise ValueError(
+                    "Cannot apply log1p to features with negative values. "
+                    "Use x_transform='none', 'diff', or 'log_diff'."
+                )
+            features = np.log1p(features)
+
         return features, targets
     
     def get_dataset(self):
