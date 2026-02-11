@@ -22,4 +22,5 @@ max_missing_weeks: 21
 
 data_source: "hospital"
 mobility_source: "advan"
+num_historical_features: 3
 # feature_cols omitted: loader uses [hosp_col] for hospital data
