@@ -3,8 +3,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch_geometric.nn import GCNConv
 
-# from torch_geometric_temporal.nn.recurrent.attentiontemporalgcn import A3TGCN
-from torch_geometric_temporal.nn.recurrent import DCRNN
+from torch_geometric_temporal.nn.recurrent import A3TGCN, DCRNN
 
 import pandas as pd
 from cgnn import process_data
@@ -111,16 +110,55 @@ class GCN(nn.Module):
 
 
 class CDCRNN(torch.nn.Module):
-    def __init__(self, node_features):
+    """
+    Conv-DCRNN for spatio-temporal forecasting.
+    Output dimension matches target_horizon; ReLU on output when predicting
+    non-negative targets (raw or log1p levels), not when predicting deltas.
+    """
+
+    def __init__(self, node_features, target_horizon=1, predict_delta=False, hidden_size=16, K=2):
         super(CDCRNN, self).__init__()
-        self.recurrent = DCRNN(node_features, 16, 2)
-        self.linear = torch.nn.Linear(16, 1)
+        self.target_horizon = int(target_horizon)
+        self.predict_delta = bool(predict_delta)
+        if self.target_horizon < 1:
+            raise ValueError("target_horizon must be >= 1.")
+        self.recurrent = DCRNN(node_features, hidden_size, K)
+        self.linear = torch.nn.Linear(hidden_size, self.target_horizon)
 
     def forward(self, x, edge_index, edge_weight, h=None):
         h = self.recurrent(x, edge_index, edge_weight, h)
         out = F.relu(h)
         out = self.linear(out)
-        
+        # Apply ReLU only when predicting in non-negative space (raw or log1p levels)
+        if not self.predict_delta:
+            out = F.relu(out)
+        return out, h
+
+
+class CA3TGCN(torch.nn.Module):
+
+    def __init__(
+        self,
+        node_features,
+        periods,
+        target_horizon=1,
+        predict_delta=False,
+        hidden_size=16,
+    ):
+        super(CA3TGCN, self).__init__()
+        self.target_horizon = int(target_horizon)
+        self.predict_delta = bool(predict_delta)
+        if self.target_horizon < 1:
+            raise ValueError("target_horizon must be >= 1.")
+        self.recurrent = A3TGCN(node_features, hidden_size, periods)
+        self.linear = torch.nn.Linear(hidden_size, self.target_horizon)
+
+    def forward(self, x, edge_index, edge_weight, h=None):
+        h = self.recurrent(x, edge_index, edge_weight, h)
+        out = F.relu(h)
+        out = self.linear(out)
+        if not self.predict_delta:
+            out = F.relu(out)
         return out, h
 
 
