@@ -1,6 +1,6 @@
 #!/bin/bash
-# Submit 6 CDCRNN experiments: 2 data sources x 3 mobility sources
-# Uses new _cdcrnn configs only (same dates: 07/13/2020 - 12/31/2022)
+# Submit CDCRNN experiments: 2 data sources x 3 mobility sources
+# Sweeps over horizon, learning rate, and hidden size with log-log transforms
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="/burg/apam/users/nhw2114/repos/cgnn"
@@ -12,49 +12,60 @@ mkdir -p "${LOG_DIR}"
 
 declare -a DATA_SOURCES=("hospital" "case")
 declare -a MOBILITY_SOURCES=("advan" "advan_plus" "safegraph")
+HORIZONS=(1 2)
+LEARNING_RATES=("1e-5" "1e-4")
+HIDDEN_SIZES=(16 32 64)
 
 JOB_IDS=()
 EXPERIMENT_NAMES=()
 
+TOTAL=$(( ${#DATA_SOURCES[@]} * ${#MOBILITY_SOURCES[@]} * ${#HORIZONS[@]} * ${#LEARNING_RATES[@]} * ${#HIDDEN_SIZES[@]} ))
+
 echo "=========================================="
-echo "Submitting CDCRNN Experiments (6 jobs)"
+echo "Submitting CDCRNN Experiments"
 echo "=========================================="
 echo "Timestamp: ${TIMESTAMP}"
-echo "Total experiments: 6"
+echo "Total experiments: ${TOTAL}"
 echo ""
 
 for data_source in "${DATA_SOURCES[@]}"; do
-    for mobility_source in "${MOBILITY_SOURCES[@]}"; do
-        VERSION="${data_source}_${mobility_source}_cdcrnn"
-        DATA_CONFIG="${data_source}_${mobility_source}_cdcrnn"
-        MODEL_CONFIG="gcn_${data_source}"
+  for mobility_source in "${MOBILITY_SOURCES[@]}"; do
+    for horizon in "${HORIZONS[@]}"; do
+      for lr in "${LEARNING_RATES[@]}"; do
+        for hs in "${HIDDEN_SIZES[@]}"; do
+            VERSION="${data_source}_${mobility_source}_cdcrnn_h${horizon}_lr${lr}_hs${hs}"
+            DATA_CONFIG="${data_source}_${mobility_source}_cdcrnn"
+            MODEL_CONFIG="cdcrnn_${data_source}"
 
-        LOG_FILE="${LOG_DIR}/cdcrnn_${VERSION}_${TIMESTAMP}.log"
-        ERR_FILE="${LOG_DIR}/cdcrnn_${VERSION}_${TIMESTAMP}.err"
+            LOG_FILE="${LOG_DIR}/cdcrnn_${VERSION}_${TIMESTAMP}.log"
+            ERR_FILE="${LOG_DIR}/cdcrnn_${VERSION}_${TIMESTAMP}.err"
 
-        HYDRA_PARAMS="data=${DATA_CONFIG} model=${MODEL_CONFIG} data.mobility_cutoff=1000"
+            echo "Submitting: ${VERSION}"
+            echo "  Log: ${LOG_FILE}"
 
-        echo "Submitting: ${VERSION}"
-        echo "  Parameters: ${HYDRA_PARAMS}"
-        echo "  Log: ${LOG_FILE}"
+            JOB_ID=$(sbatch \
+                --job-name="cdcrnn_${VERSION}" \
+                --output="${LOG_FILE}" \
+                --error="${ERR_FILE}" \
+                --export=ALL,HORIZON=${horizon},LEARNING_RATE=${lr},HIDDEN_SIZE=${hs} \
+                "${SLURM_SCRIPT}" \
+                "data=${DATA_CONFIG}" \
+                "model=${MODEL_CONFIG}" \
+                "data.mobility_cutoff=1000" \
+                2>&1 | grep -oP '\d+')
 
-        JOB_ID=$(sbatch \
-            --job-name="cdcrnn_${VERSION}" \
-            --output="${LOG_FILE}" \
-            --error="${ERR_FILE}" \
-            "${SLURM_SCRIPT}" \
-            ${HYDRA_PARAMS} \
-            2>&1 | grep -oP '\d+')
-
-        if [ -n "${JOB_ID}" ]; then
-            JOB_IDS+=("${JOB_ID}")
-            EXPERIMENT_NAMES+=("${VERSION}")
-            echo "  Job ID: ${JOB_ID}"
-        else
-            echo "  ERROR: Failed to submit job"
-        fi
-        echo ""
+            if [ -n "${JOB_ID}" ]; then
+                JOB_IDS+=("${JOB_ID}")
+                EXPERIMENT_NAMES+=("${VERSION}")
+                echo "  Job ID: ${JOB_ID}"
+            else
+                echo "  ERROR: Failed to submit job"
+            fi
+            echo ""
+        done
+      done
     done
+  done
 done
 
 TRACKING_FILE="${LOG_DIR}/jobs_cdcrnn_${TIMESTAMP}.txt"
