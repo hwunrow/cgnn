@@ -395,12 +395,12 @@ def main(cfg: DictConfig) -> None:
     best_test_loss = float("inf")
     best_state = None
 
-    def _eval_test():
+    def _eval_test(h_init=None):
         model.eval()
         test_loss_val = 0.0
         test_batches = 0
         with torch.no_grad():
-            h_test = None
+            h_test = h_init
             for snapshot in test_dataset:
                 snapshot = snapshot.to(device)
                 pred, h_test = model(
@@ -450,7 +450,7 @@ def main(cfg: DictConfig) -> None:
 
         # Evaluate on test set
         if (epoch + 1) % 100 == 0 or epoch == num_epochs - 1:
-            test_loss_val = _eval_test()
+            test_loss_val = _eval_test(h_init=h.detach())
             test_losses.append((epoch + 1, test_loss_val))
             if test_loss_val < best_test_loss:
                 best_test_loss = test_loss_val
@@ -504,7 +504,6 @@ def main(cfg: DictConfig) -> None:
             h = h.detach()
 
     test_preds, test_targets_list = [], []
-    h = None
     with torch.no_grad():
         for snapshot in test_dataset:
             snapshot = snapshot.to(device)
