@@ -321,7 +321,8 @@ def main(cfg: DictConfig) -> None:
         "version",
         f"{data_cfg.data_source}_{data_cfg.mobility_source}_cdcrnn"
     )
-    version = f"{version}_h{target_horizon}_lr{lr}_hs{hidden_size}"
+    num_epochs = cfg.training.get("num_epochs", 1000)
+    version = f"{version}_h{target_horizon}_lr{lr}_hs{hidden_size}_epochs{num_epochs}"
 
     print("Config:")
     print(OmegaConf.to_yaml(cfg))
@@ -388,7 +389,6 @@ def main(cfg: DictConfig) -> None:
         lr=lr,
         weight_decay=cfg.training.get("weight_decay", 5e-4),
     )
-    num_epochs = cfg.training.get("num_epochs", 1000)
 
     train_losses = []
     test_losses = []
