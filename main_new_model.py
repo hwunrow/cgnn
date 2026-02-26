@@ -602,65 +602,93 @@ def main(cfg: DictConfig) -> None:
     dates = pd.to_datetime([d.strftime("%Y-%m-%d") for d in loader.dates])
     cbsa_list = loader.cbsa_list
 
-    num_explainable_list = []
-    explain_edge_rows = []
-    mask_records = []
-    for i, snapshot in enumerate(tqdm(train_dataset, desc="Explain")):
-        snapshot = snapshot.to(device)
-        importance_mask = explainer.explain(
-            snapshot.x,
-            snapshot.edge_index,
-            snapshot.edge_attr,
-            epochs=explain_epochs,
-            lr=0.01,
-            verbose=False,
-        )
-        important_edges = (importance_mask > edge_threshold)
-        num_explainable_list.append(important_edges.sum().item())
+    def _explain_dataset(dataset, split_label, date_offset):
+        """Run DCRNNExplainer on every snapshot in *dataset*.
 
-        edge_index_np = snapshot.edge_index.cpu().numpy()
-        mask_np = importance_mask.cpu().numpy()
-        snapshot_date = dates[i]
+        Args:
+            dataset: temporal signal (train or test split).
+            split_label: "train" or "test" (stored in outputs).
+            date_offset: index into *dates* for the first snapshot.
 
-        for j in range(edge_index_np.shape[1]):
-            src, dst = edge_index_np[0, j], edge_index_np[1, j]
-            mask_records.append({
-                "date": snapshot_date,
-                "snapshot_idx": i,
-                "edge_j": j,
-                "src_idx": src,
-                "dst_idx": dst,
-                "cbsa_orig": cbsa_list[src],
-                "cbsa_dest": cbsa_list[dst],
-                "importance": mask_np[j],
-            })
+        Returns:
+            (num_explainable_list, explain_edge_rows, mask_records)
+        """
+        num_explainable = []
+        edge_rows = []
+        records = []
+        for i, snapshot in enumerate(tqdm(dataset, desc=f"Explain ({split_label})")):
+            snapshot = snapshot.to(device)
+            importance_mask = explainer.explain(
+                snapshot.x,
+                snapshot.edge_index,
+                snapshot.edge_attr,
+                epochs=explain_epochs,
+                lr=0.01,
+                verbose=False,
+            )
+            important_edges = (importance_mask > edge_threshold)
+            num_explainable.append(important_edges.sum().item())
 
-        edge_idx = edge_index_np[:, important_edges.cpu().numpy()]
-        for j in range(edge_idx.shape[1]):
-            explain_edge_rows.append({
-                "date": snapshot_date,
-                "cbsa_orig": cbsa_list[edge_idx[0, j]],
-                "cbsa_dest": cbsa_list[edge_idx[1, j]],
-            })
+            edge_index_np = snapshot.edge_index.cpu().numpy()
+            mask_np = importance_mask.cpu().numpy()
+            snapshot_date = dates[date_offset + i]
 
-    masks_df = pd.DataFrame(mask_records)
+            for j in range(edge_index_np.shape[1]):
+                src, dst = edge_index_np[0, j], edge_index_np[1, j]
+                records.append({
+                    "date": snapshot_date,
+                    "split": split_label,
+                    "snapshot_idx": date_offset + i,
+                    "edge_j": j,
+                    "src_idx": src,
+                    "dst_idx": dst,
+                    "cbsa_orig": cbsa_list[src],
+                    "cbsa_dest": cbsa_list[dst],
+                    "importance": mask_np[j],
+                })
+
+            edge_idx = edge_index_np[:, important_edges.cpu().numpy()]
+            for j in range(edge_idx.shape[1]):
+                edge_rows.append({
+                    "date": snapshot_date,
+                    "split": split_label,
+                    "cbsa_orig": cbsa_list[edge_idx[0, j]],
+                    "cbsa_dest": cbsa_list[edge_idx[1, j]],
+                })
+
+        return num_explainable, edge_rows, records
+
+    train_size = train_dataset.snapshot_count
+    train_expl_counts, train_edge_rows, train_mask_records = _explain_dataset(
+        train_dataset, "train", date_offset=0,
+    )
+    test_expl_counts, test_edge_rows, test_mask_records = _explain_dataset(
+        test_dataset, "test", date_offset=train_size,
+    )
+
+    all_mask_records = train_mask_records + test_mask_records
+    masks_df = pd.DataFrame(all_mask_records)
     masks_path = os.path.join(plot_dir, "importance_masks.parquet")
     masks_df.to_parquet(masks_path, index=False)
     print(f"  Full importance masks saved to {masks_path} ({len(masks_df)} rows)")
 
-    explain_count_df = pd.DataFrame(
-        {"snapshot_idx": range(len(num_explainable_list)), "num_explainable_edges": num_explainable_list}
-    )
+    all_expl_counts = train_expl_counts + test_expl_counts
+    explain_count_df = pd.DataFrame({
+        "snapshot_idx": range(len(all_expl_counts)),
+        "split": ["train"] * len(train_expl_counts) + ["test"] * len(test_expl_counts),
+        "num_explainable_edges": all_expl_counts,
+    })
     explain_count_df.to_csv(os.path.join(plot_dir, "explain_count.csv"), index=False)
     print(f"  Explainable-edge counts saved to {plot_dir}/explain_count.csv")
 
-    explain_edges_df = pd.DataFrame(explain_edge_rows)
+    all_edge_rows = train_edge_rows + test_edge_rows
+    explain_edges_df = pd.DataFrame(all_edge_rows)
     explain_edges_df.to_csv(os.path.join(plot_dir, "explain_edges.csv"), index=False)
     print(f"  Explainable edges saved to {plot_dir}/explain_edges.csv ({len(explain_edges_df)} rows)")
 
     explain_pdf = os.path.join(plot_dir, f"{version}_explain.pdf")
     plot_explain_page(
-        num_explainable_list=num_explainable_list,
+        num_explainable_list=train_expl_counts,
         train_targets_orig=train_targets_orig,
         loader=loader,
         version=version,
