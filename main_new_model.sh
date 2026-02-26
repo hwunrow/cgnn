@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --account=apam
-#SBATCH -n 1                  # The number of cpu cores to use.
-#SBATCH --time=0-02:00        # The time the job will take to run in D-HH:MM:SS
-#SBATCH --mem=50GB
-#SBATCH --gres=gpu:1
+#SBATCH -n 4                  # The number of cpu cores to use.
+#SBATCH --time=1-00:00        # The time the job will take to run in D-HH:MM:SS
+#SBATCH --mem=100GB
+#SBATCH --gres=gpu:2
 # Note: Job name and log files should be set by the submitting script
 # This script accepts Hydra parameters as command-line arguments
 
