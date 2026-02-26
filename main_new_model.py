@@ -322,7 +322,7 @@ def main(cfg: DictConfig) -> None:
         f"{data_cfg.data_source}_{data_cfg.mobility_source}_cdcrnn"
     )
     num_epochs = cfg.training.get("num_epochs", 1000)
-    version = f"{version}_h{target_horizon}_lr{lr}_hs{hidden_size}_epochs{num_epochs}"
+    version = f"{version}_x_{x_transform}_y_{y_transform}_h{target_horizon}_lr{lr}_hs{hidden_size}_epochs{num_epochs}"
 
     print("Config:")
     print(OmegaConf.to_yaml(cfg))
@@ -604,6 +604,7 @@ def main(cfg: DictConfig) -> None:
 
     num_explainable_list = []
     explain_edge_rows = []
+    mask_records = []
     for i, snapshot in enumerate(tqdm(train_dataset, desc="Explain")):
         snapshot = snapshot.to(device)
         importance_mask = explainer.explain(
@@ -617,15 +618,35 @@ def main(cfg: DictConfig) -> None:
         important_edges = (importance_mask > edge_threshold)
         num_explainable_list.append(important_edges.sum().item())
 
-        # Collect the actual edge indices that pass threshold
-        edge_idx = snapshot.edge_index[:, important_edges].cpu().numpy()
+        edge_index_np = snapshot.edge_index.cpu().numpy()
+        mask_np = importance_mask.cpu().numpy()
         snapshot_date = dates[i]
+
+        for j in range(edge_index_np.shape[1]):
+            src, dst = edge_index_np[0, j], edge_index_np[1, j]
+            mask_records.append({
+                "date": snapshot_date,
+                "snapshot_idx": i,
+                "edge_j": j,
+                "src_idx": src,
+                "dst_idx": dst,
+                "cbsa_orig": cbsa_list[src],
+                "cbsa_dest": cbsa_list[dst],
+                "importance": mask_np[j],
+            })
+
+        edge_idx = edge_index_np[:, important_edges.cpu().numpy()]
         for j in range(edge_idx.shape[1]):
             explain_edge_rows.append({
                 "date": snapshot_date,
                 "cbsa_orig": cbsa_list[edge_idx[0, j]],
                 "cbsa_dest": cbsa_list[edge_idx[1, j]],
             })
+
+    masks_df = pd.DataFrame(mask_records)
+    masks_path = os.path.join(plot_dir, "importance_masks.parquet")
+    masks_df.to_parquet(masks_path, index=False)
+    print(f"  Full importance masks saved to {masks_path} ({len(masks_df)} rows)")
 
     explain_count_df = pd.DataFrame(
         {"snapshot_idx": range(len(num_explainable_list)), "num_explainable_edges": num_explainable_list}
