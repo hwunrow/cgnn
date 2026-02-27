@@ -4,8 +4,8 @@
 
 defaults:
   - _self_
-  - data: hospital_advan
-  - model: gcn_hospital
+  - data: cdcrnn/hospital_advan_plus_full_cdcrnn
+  - model: cdcrnn_hospital_hs16
 
 training:
   # Optimizer parameters
@@ -14,24 +14,8 @@ training:
   weight_decay: 5e-4
   # Training parameters
   num_epochs: 5000
-  loss_function: "rmsle" 
+  loss_function: "rmsle"
 explain:
-  # GNNExplainer
   epochs: 200
-  prev_weeks: 4
-  explain_dates:
-
-  # Explainer configuration
-  explanation_type: "model"
-  node_mask_type: "attributes"
-  edge_mask_type: "object"
-  
-  # Model config for explainer
-  model_config:
-    mode: "regression"
-    task_level: "node"
-    return_type: "raw"
-  
-  # Other parameters
-  verbose: false
-  edge_mask_threshold: 0.5  # Threshold for filtering edges in explanation
+  edge_mask_threshold: 0.5
+  lr: 0.01

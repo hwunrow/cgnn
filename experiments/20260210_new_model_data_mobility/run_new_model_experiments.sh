@@ -34,7 +34,7 @@ for data_source in "${DATA_SOURCES[@]}"; do
       for lr in "${LEARNING_RATES[@]}"; do
         for hs in "${HIDDEN_SIZES[@]}"; do
             VERSION="${data_source}_${mobility_source}_cdcrnn_h${horizon}_lr${lr}_hs${hs}"
-            DATA_CONFIG="${data_source}_${mobility_source}_cdcrnn"
+            DATA_CONFIG="cdcrnn/${data_source}_${mobility_source}_cdcrnn"
             MODEL_CONFIG="cdcrnn_${data_source}"
 
             LOG_FILE="${LOG_DIR}/cdcrnn_${VERSION}_${TIMESTAMP}.log"
