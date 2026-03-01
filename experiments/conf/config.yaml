@@ -7,6 +7,8 @@ defaults:
   - data: cdcrnn/hospital_advan_plus_full_cdcrnn
   - model: cdcrnn_hospital_hs16
 
+version: ???
+
 training:
   # Optimizer parameters
   optimizer: "adam"
