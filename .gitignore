@@ -181,3 +181,6 @@ plots/**/*.pdf
 plots/eda/*.csv
 models/*
 experiments/experiment_logs/*
+*.log
+*.err
+jobs_*.txt
