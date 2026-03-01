@@ -46,6 +46,7 @@ def plot_experiment_page(
     loader,
     version,
     pdf_path,
+    explain_losses=None,
 ):
     """Create a one-page PDF with loss curves, aggregate forecast, and 3 CBSA plots."""
     import matplotlib.pyplot as plt
@@ -63,11 +64,16 @@ def plot_experiment_page(
 
     cbsa_to_idx = {cbsa: i for i, cbsa in enumerate(loader.cbsa_list)}
 
+    has_explain = explain_losses is not None and len(explain_losses) > 0
+
     fig = plt.figure(figsize=(18, 6))
     gs = fig.add_gridspec(nrows=3, ncols=3, width_ratios=[1.0, 1.2, 1.2])
 
-    # Loss curves
-    ax_loss = fig.add_subplot(gs[:, 0])
+    # Training loss curves (top 2 rows if explainer present, else full column)
+    if has_explain:
+        ax_loss = fig.add_subplot(gs[:2, 0])
+    else:
+        ax_loss = fig.add_subplot(gs[:, 0])
     epochs_arr = np.arange(1, len(train_losses) + 1)
     ax_loss.plot(epochs_arr, train_losses, label="Train", color="#348ABD", linewidth=2)
     if test_losses:
@@ -83,9 +89,32 @@ def plot_experiment_page(
         )
     ax_loss.set_xlabel("Epoch")
     ax_loss.set_ylabel("Loss")
-    ax_loss.set_title("Loss Curves")
+    ax_loss.set_title("Training Loss")
     ax_loss.legend(frameon=True, framealpha=0.9, loc="best")
     ax_loss.grid(True, linestyle=":", alpha=0.6)
+
+    if has_explain:
+        ax_exp = fig.add_subplot(gs[2, 0])
+        keys = ['total', 'dist', 'size', 'ent']
+        colors = {'total': '#333333', 'dist': '#348ABD',
+                  'size': '#E24A33', 'ent': '#988ED5'}
+        labels = {'total': 'Total', 'dist': 'Fidelity',
+                  'size': 'Size', 'ent': 'Entropy'}
+        n_epochs = len(explain_losses[0]['total'])
+        exp_epochs = np.arange(1, n_epochs + 1)
+        for key in keys:
+            stacked = np.array([h[key] for h in explain_losses])
+            mean_curve = stacked.mean(axis=0)
+            ax_exp.plot(
+                exp_epochs, mean_curve, label=labels[key],
+                color=colors[key], linewidth=1.5,
+                linestyle='--' if key != 'total' else '-',
+            )
+        ax_exp.set_xlabel("Explainer Epoch")
+        ax_exp.set_ylabel("Loss")
+        ax_exp.set_title("Explainer Loss (mean over snapshots)")
+        ax_exp.legend(frameon=True, framealpha=0.9, loc="best", fontsize=7)
+        ax_exp.grid(True, linestyle=":", alpha=0.6)
 
     # Aggregate forecast
     ax_agg = fig.add_subplot(gs[:, 1])
@@ -317,12 +346,8 @@ def main(cfg: DictConfig) -> None:
     else:
         hidden_size = 32
 
-    version = data_cfg.get(
-        "version",
-        f"{data_cfg.data_source}_{data_cfg.mobility_source}_cdcrnn"
-    )
     num_epochs = cfg.training.get("num_epochs", 1000)
-    version = f"{version}_x_{x_transform}_y_{y_transform}_h{target_horizon}_lr{lr}_hs{hidden_size}_epochs{num_epochs}"
+    version = cfg.version
 
     print("Config:")
     print(OmegaConf.to_yaml(cfg))
@@ -373,8 +398,7 @@ def main(cfg: DictConfig) -> None:
     print(f"  Test snapshots: {test_dataset.snapshot_count}")
     print(f"  predict_delta: {predict_delta}")
 
-    # --- 2. Train CDCRNN ---
-    print("\n[2/4] Training CDCRNN...")
+    # --- 2. Train (or load) CDCRNN ---
     model = CDCRNN(
         node_features=node_features,
         target_horizon=loader.target_horizon,
@@ -384,30 +408,71 @@ def main(cfg: DictConfig) -> None:
 
     loss_fn = get_loss_fn(cfg.training.get("loss_function", "RMSE"))
 
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=lr,
-        weight_decay=cfg.training.get("weight_decay", 5e-4),
+    checkpoint_version = cfg.get("checkpoint_version", version)
+    model_save_dir = os.path.join(
+        REPO_DIR, "models", "gcn_checkpoints", checkpoint_version
     )
+    checkpoint_path = os.path.join(model_save_dir, "cdcrnn_final_model.pt")
+    skip_training = cfg.get("skip_training", False)
 
-    train_losses = []
-    test_losses = []
-    best_test_loss = float("inf")
-    best_state = None
+    if skip_training and os.path.exists(checkpoint_path):
+        print(f"\n[2/4] Loading CDCRNN from checkpoint (skip_training=True)...")
+        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        model.load_state_dict(ckpt["model_state_dict"])
+        best_test_loss = ckpt.get("best_test_loss", float("inf"))
+        train_losses = []
+        test_losses = []
+        print(f"  Loaded from {checkpoint_path}")
+        print(f"  best_test_loss={best_test_loss:.4f}")
+    else:
+        print("\n[2/4] Training CDCRNN...")
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=lr,
+            weight_decay=cfg.training.get("weight_decay", 5e-4),
+        )
 
-    def _eval_test(h_init=None):
-        model.eval()
-        test_loss_val = 0.0
-        test_batches = 0
-        with torch.no_grad():
-            h_test = h_init
-            for snapshot in test_dataset:
+        train_losses = []
+        test_losses = []
+        best_test_loss = float("inf")
+        best_state = None
+
+        def _eval_test(h_init=None):
+            model.eval()
+            test_loss_val = 0.0
+            test_batches = 0
+            with torch.no_grad():
+                h_test = h_init
+                for snapshot in test_dataset:
+                    snapshot = snapshot.to(device)
+                    pred, h_test = model(
+                        snapshot.x,
+                        snapshot.edge_index,
+                        snapshot.edge_attr,
+                        h_test,
+                    )
+                    if pred.dim() == 1:
+                        pred = pred.unsqueeze(1)
+                    if snapshot.y.dim() == 1:
+                        target = snapshot.y.unsqueeze(1)
+                    else:
+                        target = snapshot.y
+                    test_loss_val += loss_fn(pred, target).item()
+                    test_batches += 1
+            return test_loss_val / max(test_batches, 1)
+
+        for epoch in tqdm(range(num_epochs), desc="Training"):
+            model.train()
+            epoch_loss = 0.0
+            h = None
+            num_batches = 0
+            for snapshot in train_dataset:
                 snapshot = snapshot.to(device)
-                pred, h_test = model(
+                pred, h = model(
                     snapshot.x,
                     snapshot.edge_index,
                     snapshot.edge_attr,
-                    h_test,
+                    h,
                 )
                 if pred.dim() == 1:
                     pred = pred.unsqueeze(1)
@@ -415,72 +480,48 @@ def main(cfg: DictConfig) -> None:
                     target = snapshot.y.unsqueeze(1)
                 else:
                     target = snapshot.y
-                test_loss_val += loss_fn(pred, target).item()
-                test_batches += 1
-        return test_loss_val / max(test_batches, 1)
+                loss = loss_fn(pred, target)
+                epoch_loss += loss.item()
+                num_batches += 1
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                h = h.detach()
 
-    for epoch in tqdm(range(num_epochs), desc="Training"):
-        model.train()
-        epoch_loss = 0.0
-        h = None
-        num_batches = 0
-        for snapshot in train_dataset:
-            snapshot = snapshot.to(device)
-            pred, h = model(
-                snapshot.x,
-                snapshot.edge_index,
-                snapshot.edge_attr,
-                h,
-            )
-            if pred.dim() == 1:
-                pred = pred.unsqueeze(1)
-            if snapshot.y.dim() == 1:
-                target = snapshot.y.unsqueeze(1)
-            else:
-                target = snapshot.y
-            loss = loss_fn(pred, target)
-            epoch_loss += loss.item()
-            num_batches += 1
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            h = h.detach()
+            train_losses.append(epoch_loss / num_batches)
 
-        train_losses.append(epoch_loss / num_batches)
+            if (epoch + 1) % 100 == 0 or epoch == num_epochs - 1:
+                test_loss_val = _eval_test(h_init=h.detach())
+                test_losses.append((epoch + 1, test_loss_val))
+                if test_loss_val < best_test_loss:
+                    best_test_loss = test_loss_val
+                    best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                if (epoch + 1) % 500 == 0 or epoch == num_epochs - 1:
+                    print(
+                        f"  Epoch {epoch+1}: train_loss={train_losses[-1]:.4f} "
+                        f"test_loss={test_loss_val:.4f}"
+                    )
 
-        # Evaluate on test set
-        if (epoch + 1) % 100 == 0 or epoch == num_epochs - 1:
-            test_loss_val = _eval_test(h_init=h.detach())
-            test_losses.append((epoch + 1, test_loss_val))
-            if test_loss_val < best_test_loss:
-                best_test_loss = test_loss_val
-                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-            if (epoch + 1) % 500 == 0 or epoch == num_epochs - 1:
-                print(
-                    f"  Epoch {epoch+1}: train_loss={train_losses[-1]:.4f} "
-                    f"test_loss={test_loss_val:.4f}"
-                )
+        if best_state is not None:
+            model.load_state_dict(best_state)
+        model = model.to(device)
 
-    # Restore best model (or keep last if no eval was run yet)
-    if best_state is not None:
-        model.load_state_dict(best_state)
-    model = model.to(device)
-
-    model_save_dir = os.path.join(REPO_DIR, "models", "gcn_checkpoints", version)
-    os.makedirs(model_save_dir, exist_ok=True)
-    torch.save(
-        {
-            "epoch": num_epochs,
-            "model_state_dict": model.state_dict(),
-            "best_test_loss": best_test_loss,
-            "hidden_size": hidden_size,
-            "learning_rate": lr,
-            "target_horizon": target_horizon,
-        },
-        os.path.join(model_save_dir, "cdcrnn_final_model.pt"),
-    )
-    save_config_to_directory(cfg, model_save_dir)
-    print(f"  Model saved to {model_save_dir}")
+        save_dir = os.path.join(REPO_DIR, "models", "gcn_checkpoints", version)
+        save_path = os.path.join(save_dir, "cdcrnn_final_model.pt")
+        os.makedirs(save_dir, exist_ok=True)
+        torch.save(
+            {
+                "epoch": num_epochs,
+                "model_state_dict": model.state_dict(),
+                "best_test_loss": best_test_loss,
+                "hidden_size": hidden_size,
+                "learning_rate": lr,
+                "target_horizon": target_horizon,
+            },
+            save_path,
+        )
+        save_config_to_directory(cfg, save_dir)
+        print(f"  Model saved to {save_dir}")
 
     # --- 3. Evaluate ---
     print("\n[3/4] Evaluating...")
@@ -578,24 +619,10 @@ def main(cfg: DictConfig) -> None:
     )
     eval_df.to_csv(os.path.join(plot_dir, "eval_metrics.csv"), index=False)
 
-    # --- Plot loss curves + predictions ---
-    pdf_path = os.path.join(plot_dir, f"{version}.pdf")
-    print(f"  Saving plots to {pdf_path}")
-    plot_experiment_page(
-        train_losses=train_losses,
-        test_losses=test_losses,
-        train_preds_orig=train_preds_orig,
-        train_targets_orig=train_targets_orig,
-        test_preds_orig=test_preds_orig,
-        test_targets_orig=test_targets_orig,
-        loader=loader,
-        version=version,
-        pdf_path=pdf_path,
-    )
-
     # --- 4. DCRNNExplainer ---
     print("\n[4/4] Running DCRNNExplainer...")
     explain_epochs = cfg.explain.get("epochs", 200)
+    explain_lr = cfg.explain.get("lr", 0.01)
     edge_threshold = cfg.explain.get("edge_mask_threshold", 0.5)
     explainer = DCRNNExplainer(model, device)
 
@@ -611,21 +638,25 @@ def main(cfg: DictConfig) -> None:
             date_offset: index into *dates* for the first snapshot.
 
         Returns:
-            (num_explainable_list, explain_edge_rows, mask_records)
+            (num_explainable_list, explain_edge_rows, mask_records,
+             explain_loss_histories)
         """
         num_explainable = []
         edge_rows = []
         records = []
+        all_loss_histories = []
         for i, snapshot in enumerate(tqdm(dataset, desc=f"Explain ({split_label})")):
             snapshot = snapshot.to(device)
-            importance_mask = explainer.explain(
+            importance_mask, loss_history = explainer.explain(
                 snapshot.x,
                 snapshot.edge_index,
                 snapshot.edge_attr,
                 epochs=explain_epochs,
-                lr=0.01,
+                lr=explain_lr,
                 verbose=False,
+                track_loss=True,
             )
+            all_loss_histories.append(loss_history)
             important_edges = (importance_mask > edge_threshold)
             num_explainable.append(important_edges.sum().item())
 
@@ -656,14 +687,31 @@ def main(cfg: DictConfig) -> None:
                     "cbsa_dest": cbsa_list[edge_idx[1, j]],
                 })
 
-        return num_explainable, edge_rows, records
+        return num_explainable, edge_rows, records, all_loss_histories
 
     train_size = train_dataset.snapshot_count
-    train_expl_counts, train_edge_rows, train_mask_records = _explain_dataset(
-        train_dataset, "train", date_offset=0,
+    train_expl_counts, train_edge_rows, train_mask_records, train_explain_losses = (
+        _explain_dataset(train_dataset, "train", date_offset=0)
     )
-    test_expl_counts, test_edge_rows, test_mask_records = _explain_dataset(
-        test_dataset, "test", date_offset=train_size,
+    test_expl_counts, test_edge_rows, test_mask_records, test_explain_losses = (
+        _explain_dataset(test_dataset, "test", date_offset=train_size)
+    )
+
+    # --- Plot loss curves + predictions (after explainer so we have its losses) ---
+    all_explain_losses = train_explain_losses + test_explain_losses
+    pdf_path = os.path.join(plot_dir, f"{version}.pdf")
+    print(f"  Saving plots to {pdf_path}")
+    plot_experiment_page(
+        train_losses=train_losses,
+        test_losses=test_losses,
+        train_preds_orig=train_preds_orig,
+        train_targets_orig=train_targets_orig,
+        test_preds_orig=test_preds_orig,
+        test_targets_orig=test_targets_orig,
+        loader=loader,
+        version=version,
+        pdf_path=pdf_path,
+        explain_losses=all_explain_losses,
     )
 
     all_mask_records = train_mask_records + test_mask_records
