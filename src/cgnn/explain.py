@@ -29,6 +29,7 @@ class DCRNNExplainer:
         epochs=500,
         lr=0.01,
         verbose=False,
+        track_loss=False,
     ):
         """
         Learn an edge importance mask for one snapshot.
@@ -40,9 +41,14 @@ class DCRNNExplainer:
             epochs: Number of optimization steps for the mask.
             lr: Learning rate for mask logits.
             verbose: If True, print loss components at end.
+            track_loss: If True, return per-epoch loss histories.
 
         Returns:
-            Tensor of shape (num_edges,) with values in [0, 1] (edge mask).
+            If track_loss is False:
+                Tensor of shape (num_edges,) with values in [0, 1].
+            If track_loss is True:
+                (mask_tensor, loss_dict) where loss_dict has keys
+                'total', 'dist', 'size', 'ent', each a list of floats.
         """
         num_edges = edge_index.shape[1]
         x = x.to(self.device)
@@ -62,6 +68,10 @@ class DCRNNExplainer:
             base_pred, _ = self.model(x, edge_index, base_weights)
             base_pred = torch.expm1(base_pred)
 
+        loss_history = {
+            'total': [], 'dist': [], 'size': [], 'ent': [],
+        } if track_loss else None
+
         for _ in range(epochs):
             optimizer.zero_grad()
             mask = torch.sigmoid(mask_logits)
@@ -79,12 +89,22 @@ class DCRNNExplainer:
             loss.backward()
             optimizer.step()
 
+            if track_loss:
+                loss_history['total'].append(loss.item())
+                loss_history['dist'].append(loss_dist.item())
+                loss_history['size'].append(loss_size.item())
+                loss_history['ent'].append(loss_ent.item())
+
         if verbose:
             print(
                 f"  explain loss_dist={loss_dist.item():.6f} "
                 f"loss_size={loss_size.item():.6f} loss_ent={loss_ent.item():.6f}"
             )
-        return torch.sigmoid(mask_logits).detach()
+
+        mask_result = torch.sigmoid(mask_logits).detach()
+        if track_loss:
+            return mask_result, loss_history
+        return mask_result
 
 
 def _get_config_value(cfg, key, default):
