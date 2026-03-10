@@ -1,5 +1,0 @@
-- data=case_safegraph
-- model=gcn_case
-- data.version=case_safegraph_cutoff500_early
-- data.mobility_cutoff=500
-- data.start_date=07/13/2020
