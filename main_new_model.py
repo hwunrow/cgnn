@@ -461,7 +461,7 @@ def main(cfg: DictConfig) -> None:
                     test_batches += 1
             return test_loss_val / max(test_batches, 1)
 
-        for epoch in tqdm(range(num_epochs), desc="Training"):
+        for epoch in tqdm(range(num_epochs), desc="Training", miniters=1000):
             model.train()
             epoch_loss = 0.0
             h = None
@@ -645,7 +645,7 @@ def main(cfg: DictConfig) -> None:
         edge_rows = []
         records = []
         all_loss_histories = []
-        for i, snapshot in enumerate(tqdm(dataset, desc=f"Explain ({split_label})")):
+        for i, snapshot in enumerate(tqdm(dataset, desc=f"Explain ({split_label})", miniters=10)):
             snapshot = snapshot.to(device)
             importance_mask, loss_history = explainer.explain(
                 snapshot.x,
