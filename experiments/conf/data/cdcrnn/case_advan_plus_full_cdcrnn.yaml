@@ -8,8 +8,8 @@ time_window_size: 7
 temporal_edge_window_size: 1
 mobility_cutoff: 1000
 
-raw_death_url: "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
-raw_case_url: "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
+raw_death_url: "/burg/apam/users/nhw2114/repos/cgnn/data/raw/time_series_covid19_deaths_US.csv"
+raw_case_url: "/burg/apam/users/nhw2114/repos/cgnn/data/raw/time_series_covid19_confirmed_US.csv"
 pop_url: "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
 raw_advan_file: "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan/all_advan_fix.csv"
 

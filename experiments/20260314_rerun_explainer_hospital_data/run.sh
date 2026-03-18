@@ -1,4 +1,4 @@
-20260313_rerun_explainer_case_data#!/bin/bash
+#!/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="/burg/apam/users/nhw2114/repos/cgnn"
@@ -8,9 +8,8 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 mkdir -p "${LOG_DIR}"
 
-DATA="cdcrnn/case_advan_plus_full_cdcrnn"
-MODEL="cdcrnn_case_hs16"
-CHECKPOINT_VERSION="case_advan_plus_cdcrnn_h1_lr1e-05_hs16"
+MODEL="cdcrnn_hospital_hs16"
+CHECKPOINT_VERSION="hospital_advan_plus_cdcrnn_h1_lr1e-05_hs16"
 TRAIN_LR="1e-5"
 TRAIN_EPOCHS="5000"
 
@@ -22,14 +21,13 @@ CHECKPOINT_DIR="${REPO_DIR}/models/gcn_checkpoints/${CHECKPOINT_VERSION}"
 LOG_FILE="${LOG_DIR}/${JOB_NAME}_${TIMESTAMP}.log"
 ERR_FILE="${LOG_DIR}/${JOB_NAME}_${TIMESTAMP}.err"
 
-HYDRA_PARAMS="data=${DATA} model=${MODEL} \
+HYDRA_PARAMS="data=cdcrnn/hospital_advan_plus_full_cdcrnn model=${MODEL} \
     +skip_training=True \
     +checkpoint_version=${CHECKPOINT_VERSION} \
     training.learning_rate=${TRAIN_LR} \
     training.num_epochs=${TRAIN_EPOCHS} \
     explain.lr=${EXPLAIN_LR} \
     explain.epochs=${EXPLAIN_EP} \
-    data.start_date='07/13/2020' \
     data.end_date='12/31/2022' \
     version=${JOB_NAME} \
     hydra.run.dir=${CHECKPOINT_DIR}"

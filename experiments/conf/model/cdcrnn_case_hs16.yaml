@@ -1,0 +1,6 @@
+node_features: 16
+target_feature_idx: 1
+out_dim: 1
+cdcrnn:
+  hidden_size: 16
+  K: 2

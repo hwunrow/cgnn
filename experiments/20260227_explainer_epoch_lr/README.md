@@ -58,8 +58,8 @@ masks (fewer edges above the 0.5 threshold):
 | 0.01   | 10,000 |                           8,985 |
 
 At `lr=0.01`, the mask converges quickly — there is little difference between
-2,000 and 10,000 epochs (~8,983 vs ~8,985 edges). At `lr=0.0001`, the mask is
-still noticeably denser even after 10,000 epochs (~11,884 edges), suggesting the
+2,000 and 10,000 epochs (8,983 vs 8,985 edges). At `lr=0.0001`, the mask is
+still noticeably denser even after 10,000 epochs (11,884 edges), suggesting the
 optimizer hasn't fully converged.
 
 For practical use, `lr=0.01` with 1,000–2,000 epochs appears sufficient:
