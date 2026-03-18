@@ -1,9 +1,10 @@
 from datetime import datetime
+import numpy as np
 import torch
 from torch.optim import Adam
 from torch_geometric.utils import subgraph
 from torch_geometric.explain import Explainer, GNNExplainer
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 # Default values
 _DEFAULT_EXPLAINER_EPOCHS = 200
@@ -269,3 +270,79 @@ def get_explaination(
         print("number of edges in edge mask:", original_subgraph_edges.shape[1])
 
     return explanation, original_subgraph_edges
+
+
+def load_aggregate_ts_from_cfg(cfg_file_path):
+    """Load aggregate hospitalization or case time series from a config yaml.
+
+    Handles both checkpoint configs (with a top-level 'data' key) and
+    standalone data-only configs.
+
+    Args:
+        cfg_file_path: Path to a Hydra config yaml file.
+
+    Returns:
+        (ts, dates) where ts is a float64 numpy array of aggregate target
+        values and dates is the list of snapshot dates from the loader.
+    """
+    from cgnn.dataloader import ConfigurableDatasetLoader
+
+    raw_cfg = OmegaConf.load(cfg_file_path)
+    # Checkpoint configs already have a 'data' sub-key; data-only configs don't.
+    if "data" in raw_cfg:
+        cfg = raw_cfg
+    else:
+        cfg = OmegaConf.create({"data": raw_cfg})
+
+    loader = ConfigurableDatasetLoader(cfg=cfg)
+    dates = loader.dates
+
+    agg = (
+        loader.data_df
+        .groupby(loader.date_col)[loader.target_col]
+        .sum()
+        .sort_index()
+    )
+    ts = np.array([agg.get(d, 0.0) for d in dates], dtype=np.float64)
+    return ts, dates
+
+
+def compute_lead_lag(edge_counts, aggregate_ts, max_lag=None):
+    """Compute shifted cross-correlation between explainable edge counts
+    and an aggregate target time series.
+
+    A positive best_lag means edge counts lead the target (edge counts peak
+    *best_lag* snapshots before the target peaks).
+
+    Args:
+        edge_counts: Array-like of explainable edge counts per snapshot.
+        aggregate_ts: Array-like of aggregate target values per snapshot.
+        max_lag: If set, restrict returned lags to [-max_lag, max_lag].
+
+    Returns:
+        (lags, correlations, best_lag, best_corr) where lags and correlations
+        are numpy arrays of the full cross-correlation and best_lag/best_corr
+        are the lag and normalized correlation at max |correlation|.
+    """
+    from scipy import signal
+
+    x = np.asarray(edge_counts, dtype=np.float64)
+    y = np.asarray(aggregate_ts, dtype=np.float64)
+    n = min(len(x), len(y))
+    x, y = x[:n], y[:n]
+
+    xc = x - x.mean()
+    yc = y - y.mean()
+    corr = signal.correlate(xc, yc, mode="full")
+    lags = signal.correlation_lags(n, n, mode="full")
+
+    norm = np.sqrt((xc ** 2).sum() * (yc ** 2).sum())
+    corr = corr / norm if norm > 0 else corr
+
+    if max_lag is not None:
+        mask = np.abs(lags) <= max_lag
+        lags = lags[mask]
+        corr = corr[mask]
+
+    best_idx = np.argmax(np.abs(corr))
+    return lags, corr, int(lags[best_idx]), float(corr[best_idx])
