@@ -320,9 +320,10 @@ def compute_lead_lag(edge_counts, aggregate_ts, max_lag=None):
         max_lag: If set, restrict returned lags to [-max_lag, max_lag].
 
     Returns:
-        (lags, correlations, best_lag, best_corr) where lags and correlations
-        are numpy arrays of the full cross-correlation and best_lag/best_corr
-        are the lag and normalized correlation at max |correlation|.
+        (lags, correlations, best_lag, best_corr, x_transformed, y_transformed)
+        where lags and correlations are numpy arrays of the full cross-correlation,
+        best_lag/best_corr are the lag and normalized correlation at max |correlation|,
+        and x_transformed/y_transformed are the mean-centered input series.
     """
     from scipy import signal
 
@@ -336,8 +337,14 @@ def compute_lead_lag(edge_counts, aggregate_ts, max_lag=None):
     corr = signal.correlate(xc, yc, mode="full")
     lags = signal.correlation_lags(n, n, mode="full")
 
-    norm = np.sqrt((xc ** 2).sum() * (yc ** 2).sum())
+    x_norm = np.sqrt((xc ** 2).sum())
+    y_norm = np.sqrt((yc ** 2).sum())
+    norm = x_norm * y_norm
     corr = corr / norm if norm > 0 else corr
+    x_std = x.std()
+    y_std = y.std()
+    xc = xc / x_std if x_std > 0 else xc
+    yc = yc / y_std if y_std > 0 else yc
 
     if max_lag is not None:
         mask = np.abs(lags) <= max_lag
@@ -345,4 +352,4 @@ def compute_lead_lag(edge_counts, aggregate_ts, max_lag=None):
         corr = corr[mask]
 
     best_idx = np.argmax(np.abs(corr))
-    return lags, corr, int(lags[best_idx]), float(corr[best_idx])
+    return lags, corr, int(lags[best_idx]), float(corr[best_idx]), xc, yc
