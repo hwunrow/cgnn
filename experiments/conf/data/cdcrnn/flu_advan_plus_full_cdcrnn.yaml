@@ -4,6 +4,13 @@ end_date: "04/07/2024"
 train_ratio: 0.9
 train_split_idx: 10
 
+# Expanding-window cross validation within a single season.
+cv:
+  enabled: true
+  initial_train_weeks: 10
+  test_weeks: 2
+  step_weeks: 2
+
 time_window_size: 7
 temporal_edge_window_size: 1
 mobility_cutoff: 1000
