@@ -8,6 +8,7 @@ defaults:
   - model: cdcrnn_hospital_hs16
 
 version: ???
+seed: 42
 
 training:
   # Optimizer parameters
