@@ -1,0 +1,25 @@
+version: "flu_advan_plus_full_cdcrnn_2022_2023"
+start_date: "10/02/2022"
+end_date: "04/30/2023"
+train_ratio: 0.9
+train_split_idx: 10
+
+cv:
+  enabled: false
+
+mobility_cutoff: 1000
+
+pop_url: "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
+raw_hospitalization_file: "/burg/apam/users/nhw2114/repos/cgnn/data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
+raw_advan_file: "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan/all_advan_fix.csv"
+
+hosp_col: "total_patients_hospitalized_confirmed_influenza_7_day_sum"
+max_missing_weeks: 21
+
+data_source: "hospital"
+mobility_source: "advan_plus"
+num_historical_features: 3
+
+target_horizon: 1
+x_transform: "log1p"
+y_transform: "log1p"
