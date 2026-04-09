@@ -588,6 +588,72 @@ class ConfigurableDatasetLoader:
             targets=targets_list
         )
 
+    def get_expanding_window_cv_splits(
+        self,
+        dataset,
+        initial_train_weeks,
+        test_weeks,
+        step_weeks,
+    ):
+        """
+        Create expanding-window train/test folds by slicing temporal snapshots.
+
+        Notes:
+        - Assumes `dataset` is a `DynamicGraphTemporalSignal` built from this loader,
+          so snapshot ordering matches `self.dates`.
+        - Returns contiguous prefix train windows + contiguous test windows.
+        """
+        initial_train_weeks = int(initial_train_weeks)
+        test_weeks = int(test_weeks)
+        step_weeks = int(step_weeks)
+
+        if initial_train_weeks < 1:
+            raise ValueError("initial_train_weeks must be >= 1.")
+        if test_weeks < 1:
+            raise ValueError("test_weeks must be >= 1.")
+        if step_weeks < 1:
+            raise ValueError("step_weeks must be >= 1.")
+
+        snapshot_total = getattr(dataset, "snapshot_count", None)
+        if snapshot_total is None:
+            snapshot_total = len(dataset.features)
+
+        folds = []
+        train_end = initial_train_weeks  # number of snapshots in train prefix
+        fold_idx = 0
+        while train_end + test_weeks <= snapshot_total:
+            test_end = train_end + test_weeks
+
+            train_dataset = DynamicGraphTemporalSignal(
+                edge_indices=dataset.edge_indices[:train_end],
+                edge_weights=dataset.edge_weights[:train_end],
+                features=dataset.features[:train_end],
+                targets=dataset.targets[:train_end],
+            )
+            test_dataset = DynamicGraphTemporalSignal(
+                edge_indices=dataset.edge_indices[train_end:test_end],
+                edge_weights=dataset.edge_weights[train_end:test_end],
+                features=dataset.features[train_end:test_end],
+                targets=dataset.targets[train_end:test_end],
+            )
+
+            folds.append(
+                {
+                    "fold_idx": fold_idx,
+                    "train_start": 0,
+                    "train_end": train_end,
+                    "test_start": train_end,
+                    "test_end": test_end,
+                    "train_dataset": train_dataset,
+                    "test_dataset": test_dataset,
+                }
+            )
+
+            fold_idx += 1
+            train_end += step_weeks
+
+        return folds
+
 
 # Backwards compatibility alias.
 HospitalizationAdvanPlusDatasetLoader = ConfigurableDatasetLoader
