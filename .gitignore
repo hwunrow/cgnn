@@ -168,6 +168,7 @@ cython_debug/
 /assets/tristate*
 /assets/tl*
 assets/tmp/*
+assets/
 src/JHU_cumulative-cases.csv
 data/processed/teresa_case_df.csv
 data/raw/2024_Gaz_cbsa_national.txt
@@ -181,6 +182,9 @@ plots/**/*.pdf
 plots/eda/*.csv
 models/*
 experiments/experiment_logs/*
+experiments/
+nb/*.pdf
+nb/*.png
 *.log
 *.err
 jobs_*.txt
