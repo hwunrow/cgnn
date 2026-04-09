@@ -12,6 +12,7 @@ Usage:
 """
 
 import os
+import random
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -263,6 +264,89 @@ def add_self_loops(dataset):
     return dataset
 
 
+def get_last_available_mobility_date(forecast_date, available_dates):
+    """For a forecast Monday in month M, return the latest mobility date in month
+    M-1, simulating Advan's monthly refresh (M-1 data published on first Monday of M).
+
+    Args:
+        forecast_date: pd.Timestamp or date-like for the forecast week.
+        available_dates: sorted pd.DatetimeIndex of all dates in mobility CSV.
+
+    Returns:
+        pd.Timestamp of the last available mobility date.
+    """
+    forecast_date = pd.to_datetime(forecast_date)
+    prev_month_end = forecast_date.replace(day=1) - pd.Timedelta(days=1)
+    eligible = available_dates[available_dates <= prev_month_end]
+    if len(eligible) == 0:
+        # No prior-month data available (e.g. first month of dataset);
+        # fall back to the earliest available mobility date.
+        return available_dates[0]
+    return eligible[-1]
+
+
+def apply_monthly_lag_to_dataset(dataset, loader):
+    """Replace every snapshot's edges with the latest mobility available under
+    Advan's monthly refresh schedule (M-1 data available on first Monday of M).
+
+    Unlike apply_constant_mobility_to_test(), this applies to ALL snapshots
+    (train and test), enabling full time-series explainer analysis with a
+    single pre-trained checkpoint.
+
+    Must be called BEFORE add_self_loops().
+
+    Args:
+        dataset: DynamicGraphTemporalSignal (full, unsplit).
+        loader: ConfigurableDatasetLoader — provides mobility_df, dates,
+                and _get_edges_for_date().
+
+    Returns:
+        dataset with all edge_indices and edge_weights replaced.
+    """
+    available_dates = pd.DatetimeIndex(
+        loader.mobility_df["date_range_start"].unique()
+    ).sort_values()
+    for i, forecast_date in enumerate(loader.dates):
+        lag_date = get_last_available_mobility_date(forecast_date, available_dates)
+        edge_index, edge_weight = loader._get_edges_for_date(lag_date)
+        dataset.edge_indices[i] = edge_index.copy()
+        dataset.edge_weights[i] = edge_weight.copy()
+        print(
+            f"  snapshot {i} ({pd.Timestamp(forecast_date).date()}) "
+            f"→ mobility {lag_date.date()}"
+        )
+    return dataset
+
+
+def apply_constant_mobility_to_test(dataset, train_size, loader):
+    """Replace test-period edges with the last available training-week mobility.
+
+    Simulates the real-time setting where the most recent Advan data has not
+    yet been published. All test snapshots receive the same edges: those from
+    the final training snapshot date.
+
+    Must be called BEFORE add_self_loops() so self-loops are correctly
+    re-applied to the substituted edge sets.
+
+    Args:
+        dataset: DynamicGraphTemporalSignal (full, unsplit).
+        train_size: number of training snapshots (test starts at this index).
+        loader: ConfigurableDatasetLoader — provides _get_edges_for_date()
+                and loader.dates.
+
+    Returns:
+        dataset with test-period edge_indices and edge_weights replaced.
+    """
+    last_train_date = pd.to_datetime(loader.dates[train_size - 1])
+    edge_index_const, edge_weight_const = loader._get_edges_for_date(last_train_date)
+
+    for i in range(train_size, len(dataset.edge_indices)):
+        dataset.edge_indices[i] = edge_index_const.copy()
+        dataset.edge_weights[i] = edge_weight_const.copy()
+
+    return dataset
+
+
 def get_loss_fn(objective_name: str):
     """Return loss function for the given objective name."""
     name = str(objective_name).upper()
@@ -323,6 +407,12 @@ def reverse_transform_predictions(preds, targets, loader, initial_values=None):
 
 @hydra.main(version_base=None, config_path="experiments/conf", config_name="config")
 def main(cfg: DictConfig) -> None:
+    seed = cfg.get("seed", 42)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # --- Apply log-log transform defaults ---
@@ -343,8 +433,10 @@ def main(cfg: DictConfig) -> None:
     lr = cfg.training.get("learning_rate", 1e-5)
     if hasattr(cfg, "model") and hasattr(cfg.model, "cdcrnn"):
         hidden_size = cfg.model.cdcrnn.get("hidden_size", 32)
+        K = cfg.model.cdcrnn.get("K", 2)
     else:
         hidden_size = 32
+        K = 2
 
     num_epochs = cfg.training.get("num_epochs", 1000)
     version = cfg.version
@@ -369,7 +461,431 @@ def main(cfg: DictConfig) -> None:
         cfg=cfg,
     )
     dataset = loader.get_dataset()
+
+    # --- Optional: replace test-period mobility with last training-week edges ---
+    if bool(data_cfg.get("use_lagged_mobility", False)):
+        _train_size = int(float(data_cfg.get("train_ratio", 0.8)) * dataset.snapshot_count)
+        n_test = dataset.snapshot_count - _train_size
+        print(
+            f"  use_lagged_mobility=True: substituting last training-week edges "
+            f"for {n_test} test snapshots..."
+        )
+        dataset = apply_constant_mobility_to_test(dataset, _train_size, loader)
+
+    if bool(data_cfg.get("use_monthly_lag_mobility", False)):
+        print(
+            "  use_monthly_lag_mobility=True: applying variable monthly-refresh "
+            "lag to all snapshots..."
+        )
+        dataset = apply_monthly_lag_to_dataset(dataset, loader)
+
     dataset = add_self_loops(dataset)
+
+    # --- Optional: expanding-window CV (used for flu seasons) ---
+    cv_cfg = data_cfg.get("cv", None)
+    print(f"cv_cfg: {cv_cfg}")
+    cv_enabled = bool(cv_cfg.get("enabled", False)) if isinstance(cv_cfg, (dict, DictConfig)) else False
+    if cv_enabled:
+        skip_training = bool(cfg.get("skip_training", False))
+        if skip_training:
+            raise ValueError(
+                "skip_training=true is not supported with data.cv.enabled=true yet. "
+                "Please disable skip_training for CV runs."
+            )
+
+        initial_train_weeks = int(cv_cfg.get("initial_train_weeks", 10))
+        test_weeks = int(cv_cfg.get("test_weeks", 2))
+        step_weeks = int(cv_cfg.get("step_weeks", test_weeks))
+
+        folds = loader.get_expanding_window_cv_splits(
+            dataset=dataset,
+            initial_train_weeks=initial_train_weeks,
+            test_weeks=test_weeks,
+            step_weeks=step_weeks,
+        )
+        if not folds:
+            raise ValueError(
+                "No expanding-window CV folds were generated. "
+                "Check cv.initial_train_weeks/test_weeks/step_weeks and the season date range."
+            )
+
+        print(
+            f"\n[CV] Expanding-window training enabled: folds={len(folds)} "
+            f"(initial_train_weeks={initial_train_weeks}, test_weeks={test_weeks}, step_weeks={step_weeks})"
+        )
+
+        # Whether to fit scalers is determined by x_transform / y_transform.
+        # (Exactly matches the non-CV code’s logic.)
+        use_x_scaler = loader.x_transform in _SCALER_TRANSFORMS
+        use_y_scaler = loader.y_transform in _SCALER_TRANSFORMS
+
+        loss_fn = get_loss_fn(cfg.training.get("loss_function", "RMSE"))
+        global_best_test_loss = float("inf")
+        global_best_state = None
+        global_best_fold_idx = None
+        global_best_epoch = None
+        global_best_model = None
+
+        fold_results = []
+
+        for fold in folds:
+            fold_idx = fold["fold_idx"]
+            train_dataset = fold["train_dataset"]
+            test_dataset = fold["test_dataset"]
+
+            # Per-fold scaling to avoid leakage (fit on fold train only).
+            x_mean = x_std = y_mean = y_std = None
+            if use_x_scaler:
+                x_mean, x_std = _fit_scaler(list(train_dataset.features))
+                train_dataset.features = [
+                    _scale(f, x_mean, x_std) for f in train_dataset.features
+                ]
+                test_dataset.features = [
+                    _scale(f, x_mean, x_std) for f in test_dataset.features
+                ]
+
+            if use_y_scaler:
+                y_mean, y_std = _fit_scaler(list(train_dataset.targets), per_node_only=True)
+                train_dataset.targets = [_scale(t, y_mean, y_std) for t in train_dataset.targets]
+                test_dataset.targets = [_scale(t, y_mean, y_std) for t in test_dataset.targets]
+
+            node_features = train_dataset.features[0].shape[1]
+            predict_delta = loader.predict_delta or use_y_scaler
+
+            model = CDCRNN(
+                node_features=node_features,
+                target_horizon=loader.target_horizon,
+                predict_delta=predict_delta,
+                hidden_size=hidden_size,
+                K=K,
+            ).to(device)
+
+            print(
+                f"\n[CV] Fold {fold_idx}: train_snapshots={train_dataset.snapshot_count}, "
+                f"test_snapshots={test_dataset.snapshot_count}"
+            )
+
+            optimizer = torch.optim.Adam(
+                model.parameters(),
+                lr=lr,
+                weight_decay=cfg.training.get("weight_decay", 5e-4),
+            )
+
+            best_test_loss_fold = float("inf")
+            best_state_fold = None
+            best_epoch_fold = None
+
+            def _eval_test(h_init=None):
+                model.eval()
+                test_loss_val = 0.0
+                test_batches = 0
+                with torch.no_grad():
+                    h_test = h_init
+                    for snapshot in test_dataset:
+                        snapshot = snapshot.to(device)
+                        pred, h_test = model(
+                            snapshot.x,
+                            snapshot.edge_index,
+                            snapshot.edge_attr,
+                            h_test,
+                        )
+                        if pred.dim() == 1:
+                            pred = pred.unsqueeze(1)
+                        if snapshot.y.dim() == 1:
+                            target = snapshot.y.unsqueeze(1)
+                        else:
+                            target = snapshot.y
+                        test_loss_val += loss_fn(pred, target).item()
+                        test_batches += 1
+                return test_loss_val / max(test_batches, 1)
+
+            for epoch in tqdm(
+                range(num_epochs),
+                desc=f"Training CV fold {fold_idx}",
+                miniters=1000,
+            ):
+                model.train()
+                epoch_loss = 0.0
+                h = None
+                num_batches = 0
+
+                for snapshot in train_dataset:
+                    snapshot = snapshot.to(device)
+                    pred, h = model(
+                        snapshot.x,
+                        snapshot.edge_index,
+                        snapshot.edge_attr,
+                        h,
+                    )
+                    if pred.dim() == 1:
+                        pred = pred.unsqueeze(1)
+                    if snapshot.y.dim() == 1:
+                        target = snapshot.y.unsqueeze(1)
+                    else:
+                        target = snapshot.y
+
+                    loss = loss_fn(pred, target)
+                    epoch_loss += loss.item()
+                    num_batches += 1
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    h = h.detach()
+
+                if (epoch + 1) % 100 == 0 or epoch == num_epochs - 1:
+                    test_loss_val = _eval_test(h_init=h.detach())
+                    if test_loss_val < best_test_loss_fold:
+                        best_test_loss_fold = test_loss_val
+                        best_epoch_fold = epoch + 1
+                        best_state_fold = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+
+            # --- Per-fold evaluation in original space ---
+            if best_state_fold is not None:
+                model.load_state_dict(best_state_fold)
+            model = model.to(device)
+            model.eval()
+
+            train_preds_fold, train_targets_fold = [], []
+            h_eval = None
+            with torch.no_grad():
+                for snapshot in train_dataset:
+                    snapshot = snapshot.to(device)
+                    pred, h_eval = model(
+                        snapshot.x, snapshot.edge_index, snapshot.edge_attr, h_eval,
+                    )
+                    if pred.dim() == 1:
+                        pred = pred.unsqueeze(1)
+                    if snapshot.y.dim() == 1:
+                        tgt = snapshot.y.unsqueeze(1)
+                    else:
+                        tgt = snapshot.y
+                    train_preds_fold.append(pred[:, 0].cpu().numpy())
+                    train_targets_fold.append(tgt[:, 0].cpu().numpy())
+                    h_eval = h_eval.detach()
+
+            test_preds_fold, test_targets_fold = [], []
+            with torch.no_grad():
+                for snapshot in test_dataset:
+                    snapshot = snapshot.to(device)
+                    pred, h_eval = model(
+                        snapshot.x, snapshot.edge_index, snapshot.edge_attr, h_eval,
+                    )
+                    if pred.dim() == 1:
+                        pred = pred.unsqueeze(1)
+                    if snapshot.y.dim() == 1:
+                        tgt = snapshot.y.unsqueeze(1)
+                    else:
+                        tgt = snapshot.y
+                    test_preds_fold.append(pred[:, 0].cpu().numpy())
+                    test_targets_fold.append(tgt[:, 0].cpu().numpy())
+                    h_eval = h_eval.detach()
+
+            train_preds_arr = np.vstack(train_preds_fold)
+            train_targets_arr = np.vstack(train_targets_fold)
+            test_preds_arr = np.vstack(test_preds_fold)
+            test_targets_arr = np.vstack(test_targets_fold)
+
+            if y_mean is not None:
+                train_preds_arr = train_preds_arr * y_std + y_mean
+                train_targets_arr = train_targets_arr * y_std + y_mean
+                test_preds_arr = test_preds_arr * y_std + y_mean
+                test_targets_arr = test_targets_arr * y_std + y_mean
+
+            train_preds_orig, train_targets_orig = reverse_transform_predictions(
+                train_preds_arr, train_targets_arr, loader
+            )
+
+            test_initial = None
+            if loader.y_transform in ("diff", "log_diff"):
+                train_size_snap = train_preds_arr.shape[0]
+                split_date = loader.dates[train_size_snap]
+                split_date_str = pd.to_datetime(split_date).strftime("%Y-%m-%d")
+                split_df = loader.data_df[
+                    loader.data_df[loader.date_col].dt.strftime("%Y-%m-%d") == split_date_str
+                ]
+                split_dict = dict(zip(split_df["CBSA"], split_df[loader.target_col]))
+                test_initial = np.array(
+                    [split_dict.get(cbsa, 0.0) for cbsa in loader.cbsa_list],
+                    dtype=np.float32,
+                )
+
+            test_preds_orig, test_targets_orig = reverse_transform_predictions(
+                test_preds_arr, test_targets_arr, loader, initial_values=test_initial
+            )
+
+            fold_train_rmse = float(np.sqrt(np.mean((train_preds_orig - train_targets_orig) ** 2)))
+            fold_test_rmse = float(np.sqrt(np.mean((test_preds_orig - test_targets_orig) ** 2)))
+            fold_train_mae = float(np.mean(np.abs(train_preds_orig - train_targets_orig)))
+            fold_test_mae = float(np.mean(np.abs(test_preds_orig - test_targets_orig)))
+
+            dates_all = pd.to_datetime([d.strftime("%Y-%m-%d") for d in loader.dates])
+            fold_train_date_start = str(dates_all[fold["train_start"]])
+            fold_train_date_end = str(dates_all[fold["train_end"] - 1])
+            fold_test_date_start = str(dates_all[fold["test_start"]])
+            fold_test_date_end = str(dates_all[fold["test_end"] - 1])
+
+            print(
+                f"  Fold {fold_idx} eval: "
+                f"train_rmse={fold_train_rmse:.4f} test_rmse={fold_test_rmse:.4f} "
+                f"train_mae={fold_train_mae:.4f} test_mae={fold_test_mae:.4f}"
+            )
+
+            fold_results.append(
+                {
+                    "fold_idx": fold_idx,
+                    "best_test_loss": best_test_loss_fold,
+                    "best_epoch": best_epoch_fold,
+                    "train_rmse": fold_train_rmse,
+                    "test_rmse": fold_test_rmse,
+                    "train_mae": fold_train_mae,
+                    "test_mae": fold_test_mae,
+                    "train_snapshots": train_dataset.snapshot_count,
+                    "test_snapshots": test_dataset.snapshot_count,
+                    "train_date_start": fold_train_date_start,
+                    "train_date_end": fold_train_date_end,
+                    "test_date_start": fold_test_date_start,
+                    "test_date_end": fold_test_date_end,
+                }
+            )
+
+            if best_state_fold is not None and best_test_loss_fold < global_best_test_loss:
+                global_best_test_loss = best_test_loss_fold
+                global_best_fold_idx = fold_idx
+                global_best_epoch = best_epoch_fold
+                global_best_state = best_state_fold
+                global_best_model = model  # keep instance for checkpoint save
+
+        # Aggregate fold metrics
+        best_losses = [r["best_test_loss"] for r in fold_results]
+        test_rmses = [r["test_rmse"] for r in fold_results]
+        test_maes = [r["test_mae"] for r in fold_results]
+        train_rmses = [r["train_rmse"] for r in fold_results]
+        train_maes = [r["train_mae"] for r in fold_results]
+
+        cv_loss_mean = float(np.mean(best_losses))
+        cv_loss_std = float(np.std(best_losses))
+        cv_test_rmse_mean = float(np.mean(test_rmses))
+        cv_test_rmse_std = float(np.std(test_rmses))
+        cv_test_mae_mean = float(np.mean(test_maes))
+        cv_test_mae_std = float(np.std(test_maes))
+
+        print(
+            f"\n[CV] Done. best_fold={global_best_fold_idx} "
+            f"best_test_loss={global_best_test_loss:.6f}\n"
+            f"  mean(test_loss)={cv_loss_mean:.6f}±{cv_loss_std:.6f}  "
+            f"mean(test_rmse)={cv_test_rmse_mean:.4f}±{cv_test_rmse_std:.4f}  "
+            f"mean(test_mae)={cv_test_mae_mean:.4f}±{cv_test_mae_std:.4f}"
+        )
+
+        # Save the best fold checkpoint for later evaluation/explanation.
+        checkpoint_version = cfg.get("checkpoint_version", version)
+        best_checkpoint_version = f"{checkpoint_version}_fold{global_best_fold_idx}"
+        model_save_dir = os.path.join(
+            REPO_DIR, "models", "gcn_checkpoints", best_checkpoint_version
+        )
+        os.makedirs(model_save_dir, exist_ok=True)
+        save_path = os.path.join(model_save_dir, "cdcrnn_final_model.pt")
+
+        if global_best_model is None or global_best_state is None:
+            raise RuntimeError("CV selected no best fold model checkpoint.")
+
+        # Use the model instance from the best fold and load the best state dict.
+        best_model_to_save = global_best_model
+        best_model_to_save.load_state_dict(global_best_state)
+        best_model_to_save = best_model_to_save.to(device)
+
+        torch.save(
+            {
+                "epoch": global_best_epoch,
+                "model_state_dict": best_model_to_save.state_dict(),
+                "best_test_loss": global_best_test_loss,
+                "hidden_size": hidden_size,
+                "learning_rate": lr,
+                "target_horizon": target_horizon,
+            },
+            save_path,
+        )
+        save_config_to_directory(cfg, model_save_dir)
+
+        # Persist per-fold detail + averaged summary rows.
+        plot_dir = os.path.join(REPO_DIR, "plots", version)
+        os.makedirs(plot_dir, exist_ok=True)
+
+        # Per-fold detail CSV (unchanged from before).
+        pd.DataFrame(fold_results).to_csv(
+            os.path.join(plot_dir, "cv_fold_results.csv"), index=False
+        )
+
+        # eval_metrics.csv: one row per fold + a "mean" summary row.
+        eval_rows = []
+        for r in fold_results:
+            eval_rows.append(
+                {
+                    "split": f"fold{r['fold_idx']}",
+                    "train_rmse": r["train_rmse"],
+                    "test_rmse": r["test_rmse"],
+                    "train_mae": r["train_mae"],
+                    "test_mae": r["test_mae"],
+                    "best_test_loss": r["best_test_loss"],
+                    "best_epoch": r["best_epoch"],
+                    "learning_rate": lr,
+                    "hidden_size": hidden_size,
+                    "target_horizon": target_horizon,
+                    "train_snapshots": r["train_snapshots"],
+                    "test_snapshots": r["test_snapshots"],
+                    "train_date_start": r["train_date_start"],
+                    "train_date_end": r["train_date_end"],
+                    "test_date_start": r["test_date_start"],
+                    "test_date_end": r["test_date_end"],
+                }
+            )
+        eval_rows.append(
+            {
+                "split": "cv_mean",
+                "train_rmse": float(np.mean(train_rmses)),
+                "test_rmse": cv_test_rmse_mean,
+                "train_mae": float(np.mean(train_maes)),
+                "test_mae": cv_test_mae_mean,
+                "best_test_loss": cv_loss_mean,
+                "best_epoch": None,
+                "learning_rate": lr,
+                "hidden_size": hidden_size,
+                "target_horizon": target_horizon,
+                "train_snapshots": None,
+                "test_snapshots": None,
+                "train_date_start": None,
+                "train_date_end": None,
+                "test_date_start": None,
+                "test_date_end": None,
+            }
+        )
+        eval_rows.append(
+            {
+                "split": "cv_std",
+                "train_rmse": float(np.std(train_rmses)),
+                "test_rmse": cv_test_rmse_std,
+                "train_mae": float(np.std(train_maes)),
+                "test_mae": cv_test_mae_std,
+                "best_test_loss": cv_loss_std,
+                "best_epoch": None,
+                "learning_rate": lr,
+                "hidden_size": hidden_size,
+                "target_horizon": target_horizon,
+                "train_snapshots": None,
+                "test_snapshots": None,
+                "train_date_start": None,
+                "train_date_end": None,
+                "test_date_start": None,
+                "test_date_end": None,
+            }
+        )
+        eval_df = pd.DataFrame(eval_rows)
+        eval_df.to_csv(os.path.join(plot_dir, "eval_metrics.csv"), index=False)
+
+        print(f"  Saved best fold checkpoint to {model_save_dir}")
+        print(f"  Saved eval_metrics.csv ({len(eval_rows)} rows) to {plot_dir}")
+        return
 
     train_ratio = data_cfg.get("train_ratio", 0.8)
     train_dataset, test_dataset = temporal_signal_split(dataset, train_ratio=train_ratio)
@@ -404,6 +920,7 @@ def main(cfg: DictConfig) -> None:
         target_horizon=loader.target_horizon,
         predict_delta=predict_delta,
         hidden_size=hidden_size,
+        K=K,
     ).to(device)
 
     loss_fn = get_loss_fn(cfg.training.get("loss_function", "RMSE"))
