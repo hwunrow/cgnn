@@ -1064,6 +1064,22 @@ def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21, cfg=None)
     hosp_df = hosp_df.groupby(["CBSA", "collection_week"])[hosp_col].sum().reset_index()
     hosp_df = hosp_df.loc[hosp_df["CBSA"] != "99999"]
 
+    # Fix Cleveland (CBSA 17410) cumulative flu reporting error.
+    # During 2022-01-10 to 2022-10-17 (shifted +1 day from raw dates),
+    # hospitals reported cumulative instead of incident counts.
+    if "influenza" in hosp_col:
+        _fix_mask = (
+            (hosp_df["CBSA"] == "17410")
+            & (hosp_df["collection_week"] >= pd.Timestamp("2022-01-10"))
+            & (hosp_df["collection_week"] <= pd.Timestamp("2022-10-17"))
+        )
+        hosp_df.loc[_fix_mask, hosp_col] = (
+            hosp_df.loc[_fix_mask]
+            .sort_values("collection_week")[hosp_col]
+            .diff()
+            .clip(lower=0)
+        )
+
     if cbsa_list is None:
         cbsa_list = get_cbsa_list()
     hosp_df = hosp_df[hosp_df["CBSA"].isin(cbsa_list)]
