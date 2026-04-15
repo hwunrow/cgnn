@@ -120,3 +120,48 @@ def get_node_idx(node_dict, fips, date):
     date = pd.to_datetime(date).strftime("%Y-%m-%d")
     key = f"{fips}-{date}"
     return node_dict[key]
+
+
+def compare_configs(cfg_a, cfg_b):
+    """
+    Compare two Hydra configs and return keys where they differ.
+
+    Accepts either file paths (str) or DictConfig objects. Nested keys are
+    represented in dot notation (e.g. ``"training.learning_rate"``).
+
+    Args:
+        cfg_a: Path to a YAML config file or a DictConfig.
+        cfg_b: Path to a YAML config file or a DictConfig.
+
+    Returns:
+        dict: Mapping of dotted key -> {"a": value_in_a, "b": value_in_b}
+              for every key whose value differs between the two configs.
+              Keys present in only one config are included with the missing
+              side set to ``None``.
+    """
+    if isinstance(cfg_a, str):
+        cfg_a = OmegaConf.load(cfg_a)
+    if isinstance(cfg_b, str):
+        cfg_b = OmegaConf.load(cfg_b)
+
+    def _flatten(cfg, prefix=""):
+        items = {}
+        for key, value in cfg.items():
+            full_key = f"{prefix}.{key}" if prefix else key
+            if OmegaConf.is_config(value):
+                items.update(_flatten(value, full_key))
+            else:
+                items[full_key] = value
+        return items
+
+    flat_a = _flatten(cfg_a)
+    flat_b = _flatten(cfg_b)
+
+    all_keys = set(flat_a) | set(flat_b)
+    diffs = {}
+    for key in sorted(all_keys):
+        val_a = flat_a.get(key)
+        val_b = flat_b.get(key)
+        if val_a != val_b:
+            diffs[key] = {"a": val_a, "b": val_b}
+    return diffs
