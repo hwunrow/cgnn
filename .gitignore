@@ -182,7 +182,6 @@ plots/**/*.pdf
 plots/eda/*.csv
 models/*
 experiments/experiment_logs/*
-experiments/
 nb/*.pdf
 nb/*.png
 *.log

@@ -13,12 +13,12 @@ seed: 42
 training:
   # Optimizer parameters
   optimizer: "adam"
-  learning_rate: 1e-5
+  learning_rate: 1e-4
   weight_decay: 5e-4
   # Training parameters
-  num_epochs: 30000
+  num_epochs: 5000
   loss_function: "RMSE"
 explain:
-  epochs: 200
+  epochs: 2000
   edge_mask_threshold: 0.5
   lr: 0.01

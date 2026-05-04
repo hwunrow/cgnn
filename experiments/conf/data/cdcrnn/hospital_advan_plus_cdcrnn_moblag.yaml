@@ -1,8 +1,8 @@
-version: "hospital_advan_plus_cdcrnn"
-# CDCRNN experiments: same dates across all 6 (do not change originals)
+seed: 42
+version: "hospital_advan_plus_cdcrnn_moblag"
 start_date: "07/13/2020"
-end_date: "12/31/2022"
-train_ratio: 0.8
+end_date: "12/27/2021"
+train_ratio: 0.9481        # 73 train + 4 test out of 77 total (verified: int(0.9481*77)==73)
 train_split_idx: 10
 
 time_window_size: 7
@@ -24,3 +24,9 @@ data_source: "hospital"
 mobility_source: "advan_plus"
 num_historical_features: 3
 # feature_cols omitted: loader uses [hosp_col] for hospital data
+
+# Mobility lag sensitivity flag.
+# false: use actual A_t for all test snapshots (baseline).
+# true:  replace all test-period edges with the last available training-week
+#        mobility (constant), simulating Advan's monthly refresh delay.
+use_lagged_mobility: false

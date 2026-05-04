@@ -1,4 +1,4 @@
-version: "hospital_advan_plus_full_cdcrnn"
+version: "case_advan_plus_full_cdcrnn"
 start_date: "03/22/2020"
 end_date: "03/09/2024"
 train_ratio: 0.8
