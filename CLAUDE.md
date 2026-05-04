@@ -4,7 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CGNN (COVID Graph Neural Network) is a spatio-temporal graph neural network for COVID-19 forecasting using census region (CBSA) mobility data. Based on the paper "Examining COVID-19 Forecasting using Spatio-Temporal Graph Neural Networks (2020)".
+CGNN (COVID Graph Neural Network) is a spatio-temporal graph neural network for COVID-19 forecasting using census region (CBSA) mobility data.
+
+## Scientific Development Guidelines
+
+### Strict Temporal Splitting
+- Never use random shuffling for train/test splits. This is time-series data.
+- Always split by time so that the validation sets must effectively be "the future" relatie to the training set
+
+### Data Integrity
+- Normalization: If used, `StandardScaler` and other scalers must be `fit` ONLY on the training split. Apply the transform to test data using training statistics.
+- Target leakage: Ensure that the target variable is strictly excluded from the input features at time `t`.
+- Graph topology: Ensure that the adjacency matrix `A_t` corresponds to mobility at time `t` (or `t-k` is using lagged mobility)
+
+### Reproducibility
+- All experiments must set global random seeds (`torch`, `numpy`) at the start of `main.py`
+- If using `DCRNN`, ensure determinism flags (`torch.use_deterministic_algorithms`) are active if exact replication is required.
 
 ## Commands
 
@@ -83,3 +98,4 @@ sbatch main.sh
 - PyTorch Geometric Temporal (DynamicGraphTemporalSignal)
 - Hydra (configuration management)
 - Requires CUDA 11.8+ for GPU training
+
