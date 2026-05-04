@@ -16,8 +16,8 @@ training:
   learning_rate: 1e-5
   weight_decay: 5e-4
   # Training parameters
-  num_epochs: 5000
-  loss_function: "rmsle"
+  num_epochs: 30000
+  loss_function: "RMSE"
 explain:
   epochs: 200
   edge_mask_threshold: 0.5

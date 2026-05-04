@@ -1,11 +1,14 @@
 version: "flu_advan_plus_full_cdcrnn_2022_2023"
-start_date: "10/02/2022"
-end_date: "04/30/2023"
+start_date: "08/22/2022" # flusight uses October 17, 2022
+end_date: "05/01/2023"   # maybe do May 15, 2023
 train_ratio: 0.9
 train_split_idx: 10
 
 cv:
   enabled: false
+  initial_train_weeks: 10
+  test_weeks: 2
+  step_weeks: 2
 
 mobility_cutoff: 1000
 

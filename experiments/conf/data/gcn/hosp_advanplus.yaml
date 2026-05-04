@@ -1,5 +1,0 @@
-version: "hosp_advanplus"
-# Date range and train/test split
-data:
-  start_date: "07/13/2020"
-  end_date: "12/31/2022"
