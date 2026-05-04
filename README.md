@@ -44,6 +44,43 @@ Other requirements to run on GCP:
 - PyTorch 2.1.*
 - CUDA 11.8+
 
+## Data acquisition
+
+The pipeline expects raw inputs under `data/raw/`. Most files are fetched live by `src/cgnn/process_data.py` on first run; two large or access-restricted files must be downloaded manually.
+
+### Fetched automatically
+
+These resolve from URLs at runtime — no manual action required.
+
+| File | Source |
+|---|---|
+| `time_series_covid19_confirmed_US.csv` | JHU CSSE COVID-19 repository — [github.com/CSSEGISandData/COVID-19](https://github.com/CSSEGISandData/COVID-19) |
+| `time_series_covid19_deaths_US.csv` | JHU CSSE COVID-19 repository — same |
+| `co-est2023-alldata.csv` (county population) | U.S. Census Bureau — [www2.census.gov/programs-surveys/popest](https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv). Cached at `data/raw/co-est2023-alldata.csv` if present. |
+
+### Manual downloads required
+
+Place each file at the exact path shown:
+
+| Path | Source |
+|---|---|
+| `data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv` | HHS *COVID-19 Reported Patient Impact and Hospital Capacity by Facility*, snapshot dated 2025-10-26 — [healthdata.gov](https://healthdata.gov/) |
+| `data/raw/mobility/advan_plus/all_advan_plus.csv` | **Zenodo archive accompanying this paper** (DOI: TBD). Preprocessed weekly Advan Weekly Patterns Plus aggregated to CBSA-pair visitor flows. Too large for git. |
+
+The Advan extract is produced upstream from raw Dewey/Advan API downloads using scripts in `src/cgnn/process_advan/`. Those scripts are included for reference but **not required** to reproduce the paper — the aggregated CSV is provided directly via Zenodo.
+
+After downloading, `data/raw/` should contain at minimum:
+
+```
+data/raw/
+├── COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv  # manual (HHS)
+└── mobility/
+    └── advan_plus/
+        └── all_advan_plus.csv                                                       # manual (Zenodo)
+```
+
+JHU and Census files will be fetched the first time you run `python main.py`.
+
 ## Directory Tree Structure
 ```
 e6691-2024spring-project-cgnn-nhw2114/
