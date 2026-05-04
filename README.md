@@ -1,9 +1,22 @@
-# cgnn
-## Deliverables
-- Students report - [e6691-2024spring-project-cgnn-nhw2114](#deliverables)
-- Students’ slides - [E6691.2024Spring.CGNN.nhw2114.presentationFinal](https://docs.google.com/presentation/d/1HNhcweCy0BCiZ24RSah8lsI6n9f_g-vdYaPZ-Pe3NV8/edit#slide=id.geb327816ab_0_0)
-- Papers: [Examining COVID-19 Forecasting using Spatio-Temporal Graph Neural Networks (2020)](https://arxiv.org/abs/2007.03113)
-- Github: [e6691-2024spring-project-cgnn-nhw2114](#deliverables)
+# CGNN — Spatio-temporal graph neural networks for COVID-19 forecasting
+
+This repository accompanies the paper *{TBD: paper title}* ({TBD: authors}, {TBD: year}). It implements a CDCRNN (Diffusion Convolutional Recurrent Neural Network with skip connections) for weekly COVID-19 hospitalization and case forecasting at the U.S. Core-Based Statistical Area (CBSA) level. Inter-CBSA mobility from Advan Weekly Patterns Plus provides the dynamic graph topology, and a GNNExplainer-style edge-importance procedure (`DCRNNExplainer`) recovers a sparse, time-varying subgraph of mobility flows the model relies on. Cross-correlation between explainable-edge counts and the forecast target yields the lead-lag analysis reported in the paper.
+
+## Citation
+
+If you use this code or the accompanying data, please cite:
+
+```bibtex
+@article{TBD,
+  title   = {TBD},
+  author  = {Wunrow, Han Yong and TBD},
+  journal = {TBD},
+  year    = {TBD},
+  doi     = {TBD},
+}
+```
+
+The Zenodo archive accompanying this repository (DOI: TBD) bundles the preprocessed Advan mobility extract used as input.
 
 ## Installation
 
@@ -38,11 +51,10 @@ pip install -e .
 conda env create -f environment.yml
 ```
 
-Other requirements to run on GCP:
+### GPU runtime requirements
 - Linux
-- NVIDIA GPU
+- NVIDIA GPU with CUDA 11.8+
 - PyTorch 2.1.*
-- CUDA 11.8+
 
 ## Data acquisition
 
@@ -142,51 +154,46 @@ plots/{version}/
 
 A single CUDA 11.8+ GPU is recommended; CPU fallback works but the default `num_epochs=5000` plus `explain.epochs=2000` run is long.
 
-### Paper figures
+## Notebook / figure mapping
 
-Figures in the manuscript are produced by notebooks under `nb/`. A figure-by-notebook mapping will be added before tagging the public release.
+All manuscript figures are produced by **`nb/final_manuscript_plots.ipynb`**, which reads the outputs that `python main.py` writes under `plots/{version}/`. Run the headline configurations in "Reproducing the paper" first.
 
-## Directory Tree Structure
+| Notebook section | Manuscript |
+|---|---|
+| `# Figure 1 - CCF` | Cross-correlation between hospitalizations / cases and explainable-edge counts (lead-lag analysis). |
+| `# Figure 2 - HHS plots` | Per-HHS-region aggregate time series and CCFs (4×5 panel grid). |
+| `# Figure 3 - Maps and Mobility Matrix` | Explainable-subgraph heatmaps overlaid on geographic maps for three peak dates. |
+| `# Supplementary` | Bimodal edge-importance distribution and ancillary diagnostics. |
+
+## Repository structure
+
 ```
-e6691-2024spring-project-cgnn-nhw2114/
-│
-├── assets/                                            # Plots of processed data and model results
-|
+cgnn/
+├── main.py                       # CDCRNN pipeline: data → train → evaluate → DCRNNExplainer
+├── pyproject.toml                # uv-managed dependencies
+├── uv.lock                       # pinned dependency versions
+├── requirements.txt              # generated from uv.lock for pip users
+├── environment.yml               # conda environment alternative
+├── LICENSE                       # MIT
 ├── data/
-│   ├── raw/                                           # Raw safegraph and covid data
-│   └── processed/                                     # Processed data for PyTorch-Geometric format
-│
-├── src/
-│   ├── experiments/                                   # Result csv's from experiments
-|   ├── *.yaml                                         # Experiment yaml files for hyperparameter tuning
-|   ├── *_experiment.py                                # Scripts to run experiments
-|   ├── colab_process_safegraph_mobility.py            # Jupyter notebook for processing raw safegraph data
-|   ├── model.py                                       # GNN model definitions
-|   ├── process_data.py                                # Script to process raw data into PyTorch-Geometric format
-│   └── main.ipynb                                     # Core jupyter notebook with model runs and outputs                        
-|
-├── test/                                              # Unit tests for data processing
-|
-├── utils/   
-│   ├── codebook.py                                    # mapping dicts for borough and FIPS code
-│   └── utils.py                                       # util functions for graph node mapping
-│
-├── requirements.txt                                   # List of Python dependencies for pip
-├── environment.yml                                    # List of Python dependencies for conda
-├── .flake8                                            # flake8 codestyle
-└── README.md                                          # Project README file with an overview and setup instructions
+│   ├── raw/                      # external inputs (see Data acquisition)
+│   └── processed/                # generated PyG Data objects (created on first run)
+├── src/cgnn/
+│   ├── dataloader.py             # ConfigurableDatasetLoader (PyTorch Geometric)
+│   ├── model.py                  # CDCRNN + GCN baseline
+│   ├── explain.py                # DCRNNExplainer (edge-importance for dynamic graphs)
+│   ├── plot.py                   # figure helpers
+│   ├── process_data.py           # raw inputs → PyG temporal signal
+│   ├── process_xwalk.py          # CBSA / FIPS / ZIP crosswalks
+│   ├── process_advan/            # upstream Advan API ingestion (not required to reproduce)
+│   └── utils/                    # codebook (CBSA / HHS region maps), helpers
+├── experiments/
+│   └── conf/                     # Hydra configs (config.yaml + data/, model/)
+├── nb/
+│   └── final_manuscript_plots.ipynb  # all paper figures
+└── test/                         # unit tests for process_data
 ```
 
-## Usage
-To reproduce all plots and results in the presentation and report run the following Jupyter notebook
-```
-src/main.ipynb
-```
-To rerun experiments
-```
-python src/cgnn_experiment.py
-```
+## License
 
-```
-python src/a3tgcn_experiment.py
-```
+Released under the MIT License — see [`LICENSE`](LICENSE).
