@@ -6,13 +6,38 @@
 - Github: [e6691-2024spring-project-cgnn-nhw2114](#deliverables)
 
 ## Installation
+
+### With uv (recommended)
 ```
-pip install -r requirements.txt
+uv sync              # runtime deps only
+uv sync --dev        # runtime + notebook/dev deps
+```
+`uv sync` reads `pyproject.toml` and `uv.lock` to create `.venv` with the exact pinned versions.
+
+To use a venv at a custom path instead of `.venv`:
+```
+UV_PROJECT_ENVIRONMENT=/path/to/venv uv sync
 ```
 
+To add a new dependency during development:
+```
+uv add <package>           # runtime
+uv add --dev <package>     # dev/notebook only
+```
+This updates `pyproject.toml` and `uv.lock` automatically.
+
+### With pip
+```
+pip install -r requirements.txt
+pip install -e .
+```
+`requirements.txt` is generated from `uv.lock` via `uv export --format requirements-txt --no-hashes -o requirements.txt`. Regenerate it after any `uv add` / `uv remove`.
+
+### With conda
 ```
 conda env create -f environment.yml
 ```
+
 Other requirements to run on GCP:
 - Linux
 - NVIDIA GPU
