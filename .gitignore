@@ -190,3 +190,4 @@ nb/*.png
 jobs_*.txt
 /main.sh
 /main_new_model.sh
+src/cgnn/process_safegraph/
