@@ -1,18 +1,18 @@
-# main_new_model.py
 """
 CDCRNN pipeline: temporal dataloader -> train -> evaluate -> DCRNNExplainer.
 Uses log-log transforms, per-node StandardScaler, and self-loops.
 Supports configurable horizon, learning rate, and hidden size via CLI.
 
 Usage:
-    python main_new_model.py data=hospital_advan_cdcrnn model=cdcrnn_hospital
-    python main_new_model.py data=case_safegraph_cdcrnn model=cdcrnn_case
-    python main_new_model.py data=hospital_advan_cdcrnn model=cdcrnn_hospital \
+    python main.py data=hospital_advan_cdcrnn model=cdcrnn_hospital
+    python main.py data=case_safegraph_cdcrnn model=cdcrnn_case
+    python main.py data=hospital_advan_cdcrnn model=cdcrnn_hospital \
         data.target_horizon=2 training.learning_rate=1e-4 model.cdcrnn.hidden_size=64
 """
 
 import os
 import random
+from pathlib import Path
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -29,7 +29,7 @@ from cgnn.explain import DCRNNExplainer
 from cgnn.utils import save_config_to_directory
 from cgnn.utils.codebook import TITLE_CBSA_MAP
 
-REPO_DIR = "/burg/apam/users/nhw2114/repos/cgnn"
+REPO_DIR = str(Path(__file__).resolve().parent)
 
 # Transforms that benefit from per-node StandardScaler (log_diff is self-normalizing).
 _SCALER_TRANSFORMS = {"none", "log1p", "diff"}

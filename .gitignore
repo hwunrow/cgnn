@@ -188,3 +188,5 @@ nb/*.png
 *.log
 *.err
 jobs_*.txt
+/main.sh
+/main_new_model.sh

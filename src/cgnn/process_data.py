@@ -4,8 +4,11 @@ import pandas as pd
 import glob
 import os
 import pickle
+from pathlib import Path
 from tqdm import tqdm
 import sys
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from sklearn.decomposition import PCA
 from sklearn.experimental import enable_iterative_imputer
@@ -32,15 +35,13 @@ _DEFAULT_TEMPORAL_EDGE_WINDOW_SIZE = 1
 _DEFAULT_MOBILITY_CUTOFF = 1000
 _DEFAULT_RAW_DEATH_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
 _DEFAULT_RAW_CASE_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
-_DEFAULT_RAW_SAFEGRAPH_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/safegraph/all_harddrive_us.csv"
-_DEFAULT_RAW_MOBILITY_REPORT_DIR = (
-    "/burg/apam/users/nhw2114/repos/cgnn/data/raw/google_mobility_reports/"
-)
+_DEFAULT_RAW_SAFEGRAPH_FILE = str(_REPO_ROOT / "data" / "raw" / "mobility" / "safegraph" / "all_harddrive_us.csv")
+_DEFAULT_RAW_MOBILITY_REPORT_DIR = str(_REPO_ROOT / "data" / "raw" / "google_mobility_reports") + "/"
 _DEFAULT_POP_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv"
-_DEFAULT_RAW_HOSPITALZATION_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv"
+_DEFAULT_RAW_HOSPITALZATION_FILE = str(_REPO_ROOT / "data" / "raw" / "COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility_20251026.csv")
 _DEFAULT_HOSP_COL = "total_adult_patients_hospitalized_confirmed_covid_7_day_sum"
-_DEFAULT_RAW_ADVAN_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan/all_advan_filter_shared_pois.csv"
-_DEFAULT_RAW_ADVAN_PLUS_FILE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan_plus/all_advan_plus.csv"
+_DEFAULT_RAW_ADVAN_FILE = str(_REPO_ROOT / "data" / "raw" / "mobility" / "advan" / "all_advan_filter_shared_pois.csv")
+_DEFAULT_RAW_ADVAN_PLUS_FILE = str(_REPO_ROOT / "data" / "raw" / "mobility" / "advan_plus" / "all_advan_plus.csv")
 _DEFAULT_MAX_MISSING_WEEKS = 21
 
 
@@ -244,15 +245,10 @@ def create_torch_geometric_data(
                 .fillna(0)
             )
 
-    x_t[x_t_cols].to_csv(
-        f"/burg/apam/users/nhw2114/repos/cgnn/data/processed/{version}/x_t.csv",
-        index=False,
-    )
+    _processed_dir = _REPO_ROOT / "data" / "processed" / version
+    x_t[x_t_cols].to_csv(_processed_dir / "x_t.csv", index=False)
     x_t = torch.tensor(x_t[x_t_cols].values, dtype=torch.float32)
-    y_t.to_csv(
-        f"/burg/apam/users/nhw2114/repos/cgnn/data/processed/{version}/y_t.csv",
-        index=False,
-    )
+    y_t.to_csv(_processed_dir / "y_t.csv", index=False)
     y_t = torch.tensor(
         y_t.values,
         dtype=torch.float32,
@@ -282,7 +278,7 @@ def save_data(
     version,
     cfg=None,
 ):
-    path = f"/burg/apam/users/nhw2114/repos/cgnn/data/processed/{version}/"
+    path = str(_REPO_ROOT / "data" / "processed" / version) + "/"
     os.makedirs(path, exist_ok=True)
 
     if death_subset_df is not None:
@@ -771,9 +767,7 @@ def process_mobility_report(cbsa_list=None, cfg=None):
     }
     print("Reading population data from", pop_url)
     # Try to use local file first, fallback to URL
-    local_pop_file = (
-        "/burg/apam/users/nhw2114/repos/cgnn/data/raw/co-est2023-alldata.csv"
-    )
+    local_pop_file = str(_REPO_ROOT / "data" / "raw" / "co-est2023-alldata.csv")
     if os.path.exists(local_pop_file):
         pop_df = pd.read_csv(
             local_pop_file,
@@ -985,17 +979,66 @@ def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21, cfg=None)
     end_date = _get_config_value(data_cfg, "end_date", _DEFAULT_END_DATE)
     max_missing_weeks = _get_config_value(data_cfg, "max_missing_weeks", max_missing_weeks)
 
-    hosp_df = pd.read_csv(raw_hospitalization_file, dtype={"fips_code": str})
+    hosp_df = pd.read_csv(raw_hospitalization_file, dtype={"fips_code": str, "hospital_pk": str})
 
     hosp_df["collection_week"] = pd.to_datetime(hosp_df["collection_week"])
     # Shift dates forward by one day to align with advan data
     hosp_df["collection_week"] = hosp_df["collection_week"] + pd.Timedelta(days=1)
 
-    # filter  between start_date and end_date
-    hosp_df = hosp_df.loc[
-        (hosp_df["collection_week"] >= start_date)
-        & (hosp_df["collection_week"] <= end_date)
-    ]
+    # clean hospitalization column
+    hosp_df[hosp_col] = hosp_df[hosp_col].replace("-999,999", 0)
+    hosp_df[hosp_col] = hosp_df[hosp_col].replace(-999999, 0)
+    hosp_df[hosp_col] = pd.to_numeric(hosp_df[hosp_col], errors="coerce")
+
+    # manually fix fips codes that are not in the county_cbsa_map
+    manual_fips_fixes = {
+        "02080": "02063",
+        "02120": "02122",
+        "02210": "02122",
+        "02260": "02063",
+        "02280": "02195",
+        "09001": "09190",
+        "09003": "09110",
+        "09005": "09160",
+        "09007": "09130",
+        "09009": "09170",
+        "09011": "09180",
+        "09013": "09110",
+        "09015": "09150",
+        "51595": "51111",
+    }
+    hosp_df["fips_code"] = hosp_df["fips_code"].replace(manual_fips_fixes)
+    # merge in CBSA info and group by
+    county_cbsa_map = get_county_cbsa_map()
+    hosp_df = hosp_df.merge(
+        county_cbsa_map, left_on="fips_code", right_on="COUNTY", how="inner"
+    )
+
+    hosp_df = hosp_df.loc[hosp_df["CBSA"] != "99999"]
+    if cbsa_list is None:
+        cbsa_list = get_cbsa_list()
+    hosp_df = hosp_df[hosp_df["CBSA"].isin(cbsa_list)]
+
+    # Fix Cleveland (CBSA 17410) cumulative flu reporting error.
+    # During 2022-01-10 to 2022-10-17 (shifted +1 day from raw dates),
+    # hospitals reported cumulative instead of incident counts.
+    if "influenza" in hosp_col:
+        _fix_mask = (
+            (hosp_df["CBSA"] == "17410")
+            & (hosp_df["collection_week"] >= pd.Timestamp("2022-01-10"))
+            & (hosp_df["collection_week"] <= pd.Timestamp("2022-10-17"))
+        )
+        _fix_sorted = hosp_df.loc[_fix_mask].sort_values(
+            ["hospital_pk", "collection_week"]
+        )
+        hosp_df.loc[_fix_mask, hosp_col] = (
+            _fix_sorted[hosp_col]
+            .astype(float)
+            .groupby(_fix_sorted["hospital_pk"])
+            .diff()
+            .clip(lower=0)
+            .fillna(0)
+        )
 
     # cutoff by max missing weeks
     dates = get_date_range(start_date, end_date)
@@ -1031,58 +1074,14 @@ def process_hospitalization_data(cbsa_list=None, max_missing_weeks=21, cfg=None)
     hosp_df = hosp_df.merge(hospital_reporting, on="hospital_pk", how="left")
     hosp_df = hosp_df.loc[hosp_df["missing_weeks"] <= max_missing_weeks]
 
-    # clean hospitalization column
-    hosp_df[hosp_col] = hosp_df[hosp_col].replace("-999,999", 0)
-    hosp_df[hosp_col] = hosp_df[hosp_col].replace(-999999, 0)
+    # filter between start_date and end_date
+    hosp_df = hosp_df.loc[
+        (hosp_df["collection_week"] >= start_date)
+        & (hosp_df["collection_week"] <= end_date)
+    ]
 
-    hosp_df[hosp_col] = pd.to_numeric(hosp_df[hosp_col], errors="coerce")
-
-    # manually fix fips codes that are not in the county_cbsa_map
-    manual_fips_fixes = {
-        "02080": "02063",
-        "02120": "02122",
-        "02210": "02122",
-        "02260": "02063",
-        "02280": "02195",
-        "09001": "09190",
-        "09003": "09110",
-        "09005": "09160",
-        "09007": "09130",
-        "09009": "09170",
-        "09011": "09180",
-        "09013": "09110",
-        "09015": "09150",
-        "51595": "51111",
-    }
-    hosp_df["fips_code"] = hosp_df["fips_code"].replace(manual_fips_fixes)
-    # merge in CBSA info and group by
-    county_cbsa_map = get_county_cbsa_map()
-    hosp_df = hosp_df.merge(
-        county_cbsa_map, left_on="fips_code", right_on="COUNTY", how="inner"
-    )
-
+    # group by CBSA and collection week and sum the hospitalization column
     hosp_df = hosp_df.groupby(["CBSA", "collection_week"])[hosp_col].sum().reset_index()
-    hosp_df = hosp_df.loc[hosp_df["CBSA"] != "99999"]
-
-    # Fix Cleveland (CBSA 17410) cumulative flu reporting error.
-    # During 2022-01-10 to 2022-10-17 (shifted +1 day from raw dates),
-    # hospitals reported cumulative instead of incident counts.
-    if "influenza" in hosp_col:
-        _fix_mask = (
-            (hosp_df["CBSA"] == "17410")
-            & (hosp_df["collection_week"] >= pd.Timestamp("2022-01-10"))
-            & (hosp_df["collection_week"] <= pd.Timestamp("2022-10-17"))
-        )
-        hosp_df.loc[_fix_mask, hosp_col] = (
-            hosp_df.loc[_fix_mask]
-            .sort_values("collection_week")[hosp_col]
-            .diff()
-            .clip(lower=0)
-        )
-
-    if cbsa_list is None:
-        cbsa_list = get_cbsa_list()
-    hosp_df = hosp_df[hosp_df["CBSA"].isin(cbsa_list)]
 
     # ensure all CBSAs have full date range and fill missing values with 0
     dates = get_date_range(start_date, end_date)
@@ -1241,7 +1240,7 @@ def process_case_death_data(cbsa_list=None, cfg=None):
     ## TODO: replace this with the ad-hoc fixes coded here
     ##################################################################################
     case_df = pd.read_csv(
-        "/burg/apam/users/nhw2114/repos/cgnn/data/processed/teresa_case_df.csv",
+        _REPO_ROOT / "data" / "processed" / "teresa_case_df.csv",
         dtype={"FIPS": str},
     )
     case_df["FIPS"] = case_df["FIPS"].str.replace("'", "")

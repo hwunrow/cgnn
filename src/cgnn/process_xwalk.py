@@ -1,12 +1,9 @@
 import pandas as pd
 import os
+from pathlib import Path
 
 
-# Select paths depending on environment (cluster vs local)
-if os.path.exists("/burg/apam/users/nhw2114/repos/cgnn"):
-    _RAW_BASE = "/burg/apam/users/nhw2114/repos/cgnn/data/raw"
-else:
-    _RAW_BASE = "/Users/hwunrow/Documents/GitHub/cgnn/data/raw"
+_RAW_BASE = str(Path(__file__).resolve().parent.parent.parent / "data" / "raw")
 
 ZIP_CBSA_PATH = os.path.join(_RAW_BASE, "ZIP_CBSA_122024.csv")
 ZIP_COUNTY_PATH = os.path.join(_RAW_BASE, "ZIP_COUNTY_122024.csv")

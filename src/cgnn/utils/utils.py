@@ -4,7 +4,10 @@ from cgnn.utils.codebook import TITLE_CBSA_MAP, HHS_REGION_MAP
 from datetime import datetime
 import math
 import os
+from pathlib import Path
 from omegaconf import OmegaConf, DictConfig
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 def get_date_range(start, end, day_of_week="MON"):
@@ -21,7 +24,7 @@ def get_cbsa_list(hhs_region=None):
     if hhs_region is None:
         return all_cbsas
 
-    df = pd.read_csv("/burg/apam/users/nhw2114/repos/cgnn/data/raw/list1_2023.csv")
+    df = pd.read_csv(_REPO_ROOT / "data" / "raw" / "list1_2023.csv")
     df = df.iloc[:-3]  # Remove footer rows
 
     cbsa_states = df.groupby("CBSA Code")["State Name"].apply(set).to_dict()
@@ -50,7 +53,7 @@ def get_cbsa_info(cbsa_list=None):
         cbsa_list = get_cbsa_list()
 
     df = pd.read_csv(
-        "/burg/apam/users/nhw2114/repos/cgnn/data/raw/list1_2023.csv",
+        _REPO_ROOT / "data" / "raw" / "list1_2023.csv",
         dtype={"CBSA Code": str},
     )
     df = df.iloc[:-3]  # Remove footer rows

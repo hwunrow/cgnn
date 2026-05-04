@@ -98,14 +98,15 @@ def plot_explainable_subgraph(
     Returns:
         matplotlib.figure.Figure
     """
+    _repo_root = Path(__file__).parent.parent.parent
     cbsa_gdf = gpd.read_file(
-        '/burg/apam/users/nhw2114/repos/cgnn/assets/cb_2018_us_cbsa_500k/cb_2018_us_cbsa_500k.shp'
+        _repo_root / 'assets' / 'cb_2018_us_cbsa_500k' / 'cb_2018_us_cbsa_500k.shp'
     )
     states_gdf = gpd.read_file(
-        '/burg/apam/users/nhw2114/repos/cgnn/assets/cb_2018_us_state_500k/cb_2018_us_state_500k.shp'
+        _repo_root / 'assets' / 'cb_2018_us_state_500k' / 'cb_2018_us_state_500k.shp'
     )
     raw_advan_mobility = pd.read_csv(
-        '/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan_plus/all_advan_plus.csv',
+        _repo_root / 'data' / 'raw' / 'mobility' / 'advan_plus' / 'all_advan_plus.csv',
         dtype={'cbsa_orig': str, 'cbsa_dest': str},
     )
 
@@ -718,7 +719,7 @@ def plot_mobility_importance_heatmap(
     target_date = pd.to_datetime(target_date)
 
     advan_df = pd.read_csv(
-        '/burg/apam/users/nhw2114/repos/cgnn/data/raw/mobility/advan_plus/all_advan_plus.csv',
+        Path(__file__).parent.parent.parent / 'data' / 'raw' / 'mobility' / 'advan_plus' / 'all_advan_plus.csv',
         dtype={'cbsa_orig': str, 'cbsa_dest': str},
     )
 
