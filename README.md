@@ -81,6 +81,71 @@ data/raw/
 
 JHU and Census files will be fetched the first time you run `python main.py`.
 
+## Reproducing the paper
+
+### Headline configurations
+
+The default Hydra config trains the primary COVID-19 hospitalization model from the paper. Other manuscript configurations select via Hydra overrides:
+
+| Result | Command |
+|---|---|
+| Weekly COVID-19 hospital admissions (main result) | `python main.py` |
+| Weekly COVID-19 case counts | `python main.py data=cdcrnn/case_advan_plus_full_cdcrnn model=cdcrnn_case_hs32` |
+| Mobility-lag sensitivity (SI) | `python main.py data=cdcrnn/hospital_advan_plus_cdcrnn_moblag` |
+
+Default = `data=cdcrnn/hospital_advan_plus_full_cdcrnn model=cdcrnn_hospital_hs16`. See `experiments/conf/config.yaml` for shared training/explainer hyperparameters (`learning_rate=1e-4`, `num_epochs=5000`, `explain.epochs=2000`).
+
+### End-to-end recipe
+
+From a clean clone to all paper outputs:
+
+```bash
+# 1. Clone & set up environment
+git clone https://github.com/hwunrow/cgnn.git
+cd cgnn
+uv sync                                # creates .venv from uv.lock
+
+# 2. Download the two manual data files (see "Data acquisition" above)
+mkdir -p data/raw/mobility/advan_plus
+# -> place data/raw/COVID-19_Reported_Patient_Impact_..._20251026.csv (HHS)
+# -> place data/raw/mobility/advan_plus/all_advan_plus.csv             (Zenodo)
+
+# 3. Train + evaluate + run DCRNNExplainer (default = hospital model)
+uv run python main.py
+
+# 4. (Optional) Reproduce the case-count and mobility-lag SI runs
+uv run python main.py data=cdcrnn/case_advan_plus_full_cdcrnn model=cdcrnn_case_hs32
+uv run python main.py data=cdcrnn/hospital_advan_plus_cdcrnn_moblag
+```
+
+JHU CSSE time series and the Census population file are fetched live on the first run (the Census file is then cached at `data/raw/co-est2023-alldata.csv` for subsequent runs).
+
+### Outputs
+
+For each run, `version` (set in the data config) determines output paths:
+
+```
+models/gcn_checkpoints/{version}/
+├── cdcrnn_final_model.pt       # trained weights + best test loss
+└── config.yaml                 # full Hydra config snapshot
+
+plots/{version}/
+├── eval_metrics.csv            # train/test RMSE + MAE in original space
+├── {version}.pdf               # loss curves, aggregate forecast, 3 CBSA panels
+├── {version}_explain.pdf       # explainable-edge count vs aggregate target
+├── importance_masks.parquet    # per-edge importance per snapshot (DCRNNExplainer)
+├── explain_count.csv           # explainable edges per snapshot
+└── explain_edges.csv           # CBSA-pair edges above the importance threshold
+```
+
+### Hardware
+
+A single CUDA 11.8+ GPU is recommended; CPU fallback works but the default `num_epochs=5000` plus `explain.epochs=2000` run is long.
+
+### Paper figures
+
+Figures in the manuscript are produced by notebooks under `nb/`. A figure-by-notebook mapping will be added before tagging the public release.
+
 ## Directory Tree Structure
 ```
 e6691-2024spring-project-cgnn-nhw2114/
