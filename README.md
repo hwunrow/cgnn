@@ -1,6 +1,6 @@
 # CGNN — Spatio-temporal graph neural networks for COVID-19 forecasting
 
-This repository accompanies the paper *{TBD: paper title}* ({TBD: authors}, {TBD: year}). It implements a CDCRNN (Diffusion Convolutional Recurrent Neural Network with skip connections) for weekly COVID-19 hospitalization and case forecasting at the U.S. Core-Based Statistical Area (CBSA) level. Inter-CBSA mobility from Advan Weekly Patterns Plus provides the dynamic graph topology, and a GNNExplainer-style edge-importance procedure (`DCRNNExplainer`) recovers a sparse, time-varying subgraph of mobility flows the model relies on. Cross-correlation between explainable-edge counts and the forecast target yields the lead-lag analysis reported in the paper.
+This repository accompanies the paper *Early warning signal of COVID-19 hospitalization and case onset and peaks using explainable mobility subgraphs*. It implements a CDCRNN (Diffusion Convolutional Recurrent Neural Network with skip connections) for weekly COVID-19 hospitalization and case forecasting at the U.S. Core-Based Statistical Area (CBSA) level. Inter-CBSA mobility from Advan Weekly Patterns Plus provides the dynamic graph topology, and a GNNExplainer-style edge-importance procedure (`DCRNNExplainer`) recovers a sparse, time-varying subgraph of mobility flows the model relies on. Cross-correlation between explainable-edge counts and the forecast target yields the lead-lag analysis reported in the paper.
 
 ## Citation
 
